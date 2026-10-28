@@ -13,7 +13,7 @@
     <!-- The hosting tests build a real host and send its telemetry to an in-memory exporter. -->
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.12" />
     <!-- The live model tests (design/44) call an OpenAI-compatible endpoint through Microsoft.Extensions.AI. -->
-    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.10.1" />
+    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.11.0" />
     <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.10.0" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="OpenTelemetry.Exporter.InMemory" Version="1.19.1" />
