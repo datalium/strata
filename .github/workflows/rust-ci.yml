@@ -1,0 +1,263 @@
+name: Rust & CLI CI/CD
+
+on:
+    workflow_dispatch:
+    push:
+        branches: [main]
+        tags: ['v*']
+    pull_request:
+        branches: [main]
+
+env:
+    CARGO_TERM_COLOR: always
+
+jobs:
+    quality-and-test:
+        name: Code Quality and Tests
+        runs-on: ubuntu-latest
+        env:
+            STRATA_TEST_POSTGRES_URL: postgres://strata:strata@localhost:5432/strata
+            STRATA_TEST_REDIS_URL: redis://localhost:6379
+            # Makes the Postgres/Redis adapter tests fail, not skip, if the URLs above are ever missing.
+            STRATA_REQUIRE_BACKENDS: '1'
+        services:
+            postgres:
+                image: pgvector/pgvector:pg16
+                env:
+                    POSTGRES_USER: strata
+                    POSTGRES_PASSWORD: strata
+                    POSTGRES_DB: strata
+                ports:
+                    - 5432:5432
+                options: >-
+                    --health-cmd "pg_isready -U strata -d strata"
+                    --health-interval 2s
+                    --health-timeout 3s
+                    --health-retries 30
+            redis:
+                image: redis:8
+                ports:
+                    - 6379:6379
+                options: >-
+                    --health-cmd "redis-cli ping"
+                    --health-interval 2s
+                    --health-timeout 3s
+                    --health-retries 30
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Setup Rust Toolchain
+              uses: dtolnay/rust-toolchain@stable
+              with:
+                  components: clippy, rustfmt
+
+            # design/36-Packaging-And-Versioning.md: every manifest agrees on the version, and a release tag is
+            # "v" followed by it. Every job a tag triggers needs this one, so a tag that doesn't match the
+            # manifests publishes nothing.
+            - name: Check Versions
+              run: |
+                  if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+                      .github/scripts/versions.sh --tag "$GITHUB_REF_NAME"
+                  else
+                      .github/scripts/versions.sh
+                  fi
+
+            - name: Check Formatting (rust workspace)
+              working-directory: rust
+              run: cargo fmt --all -- --check
+
+            - name: Check Formatting (cli)
+              working-directory: cli
+              run: cargo fmt --all -- --check
+
+            - name: Check Formatting (examples/rust-agent)
+              working-directory: examples/rust-agent
+              run: cargo fmt --all -- --check
+
+            - name: Run Clippy Lints (rust workspace)
+              working-directory: rust
+              run: cargo clippy --all-targets --all-features -- -D warnings
+
+            - name: Run Clippy Lints (cli)
+              working-directory: cli
+              run: cargo clippy --all-targets --all-features -- -D warnings
+
+            - name: Run Clippy Lints (examples/rust-agent)
+              working-directory: examples/rust-agent
+              run: cargo clippy --all-targets --all-features -- -D warnings
+
+            - name: Run Engine Tests (rust workspace)
+              working-directory: rust
+              run: cargo test --all-features
+
+            - name: Run CLI Tests
+              working-directory: cli
+              run: cargo test --all-features
+
+            - name: Run Example Agent (rust-agent)
+              working-directory: examples/rust-agent
+              run: cargo test
+
+            # design/37-Benchmarks.md: every benchmark runs once, with small counts, so one that no longer
+            # compiles or fails when it runs fails here. Nothing is measured: a shared runner is too noisy.
+            # Unoptimized on purpose (the build the tests already made); the profile says so and goes on.
+            - name: Run Each Benchmark Once
+              working-directory: rust
+              run: |
+                  cargo test -p strata-bench --benches
+                  cargo run -p strata-bench -- --quick
+
+            # Packages each crate and builds it from its package, resolving its siblings from the packages
+            # just made: what crates.io would be given builds on its own.
+            - name: Package the Crates
+              working-directory: rust
+              run: cargo package --workspace --exclude strata-bench
+
+    build-cli-artifacts:
+        name: Build Cross-Platform CLI
+        needs: quality-and-test
+        if: startsWith(github.ref, 'refs/tags/v')
+        runs-on: ${{ matrix.os }}
+        strategy:
+            matrix:
+                # asset_name is the file's name on the GitHub release, and the docs' install page lists
+                # these three names. Each must be unique: release assets are matched by file name.
+                include:
+                    - os: ubuntu-latest
+                      target: x86_64-unknown-linux-gnu
+                      binary_name: strata
+                      asset_name: strata-linux-x64
+                    - os: macos-latest
+                      target: x86_64-apple-darwin
+                      binary_name: strata
+                      asset_name: strata-macos-x64
+                    - os: windows-latest
+                      target: x86_64-pc-windows-msvc
+                      binary_name: strata.exe
+                      asset_name: strata-windows-x64.exe
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Setup Rust Toolchain
+              uses: dtolnay/rust-toolchain@stable
+              with:
+                  target: ${{ matrix.target }}
+
+            - name: Compile CLI Binary
+              working-directory: cli
+              run: cargo build --release --bin strata --target ${{ matrix.target }}
+
+            - name: Name the Binary for the Release
+              shell: bash
+              run: |
+                  mkdir -p dist
+                  cp "cli/target/${{ matrix.target }}/release/${{ matrix.binary_name }}" "dist/${{ matrix.asset_name }}"
+
+            - name: Upload Binary Artifact
+              uses: actions/upload-artifact@v4
+              with:
+                  name: ${{ matrix.asset_name }}
+                  path: dist/${{ matrix.asset_name }}
+                  if-no-files-found: error
+
+    # design/36-Packaging-And-Versioning.md, "What a tag does": every v* tag, preview or release, publishes
+    # the six crates to crates.io and then creates the GitHub release with the CLI. Crates first, so a
+    # failed publish leaves no public release.
+    #
+    # Ownership comes from CRATES_IO_TOKEN, created by the Datalium release account. It lives only in the
+    # "release" environment.
+    publish-rust:
+        name: Publish to Crates.io & GitHub Releases
+        needs: build-cli-artifacts
+        if: startsWith(github.ref, 'refs/tags/v')
+        runs-on: ubuntu-latest
+        environment: release
+        permissions:
+            contents: write # creates the GitHub release
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Setup Rust Toolchain
+              uses: dtolnay/rust-toolchain@stable
+
+            # In dependency order: each crate depends on the ones before it at exactly this version.
+            #
+            # crates.io limits how fast new crate names can be published (at the time of writing, a burst
+            # of 5, then about one every 10 minutes), so the sixth new crate may get HTTP 429. A 429 waits
+            # and tries again. A crate already on crates.io at this version is skipped, so the job can be
+            # re-run after a partial publish.
+            - name: Publish to Crates.io
+              working-directory: rust
+              env:
+                  CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+              run: |
+                  publish() {
+                      local crate="$1" attempt
+                      for attempt in 1 2 3 4; do
+                          if cargo publish -p "$crate" 2>&1 | tee "$RUNNER_TEMP/publish.log"; then
+                              return 0
+                          fi
+                          if grep -q -i -E 'already (exists|uploaded)' "$RUNNER_TEMP/publish.log"; then
+                              echo "::notice::$crate is already on crates.io at this version. Skipped."
+                              return 0
+                          fi
+                          if grep -q -i -E '429|too many' "$RUNNER_TEMP/publish.log" && [ "$attempt" -lt 4 ]; then
+                              echo "::warning::crates.io rate limit on $crate (attempt $attempt). Trying again in 11 minutes."
+                              sleep 660
+                              continue
+                          fi
+                          echo "::error::cargo publish failed for $crate."
+                          return 1
+                      done
+                  }
+
+                  for crate in \
+                      datalium-strata-macros \
+                      datalium-strata \
+                      datalium-strata-memory \
+                      datalium-strata-cloud \
+                      datalium-strata-host \
+                      datalium-strata-ai; do
+                      publish "$crate"
+                  done
+
+            - name: Download All CLI Binaries
+              uses: actions/download-artifact@v4
+              with:
+                  path: cli-binaries
+                  merge-multiple: true
+
+            - name: Write the Checksums
+              working-directory: cli-binaries
+              run: |
+                  count=$(ls strata-* | wc -l)
+                  [ "$count" -eq 3 ] || { echo "::error::Expected 3 CLI binaries, found $count."; ls -l; exit 1; }
+                  sha256sum strata-* > SHA256SUMS.txt
+                  cat SHA256SUMS.txt
+
+            # The release notes are the version's section of CHANGELOG.md, without its heading.
+            - name: Extract the Release Notes
+              id: notes
+              run: |
+                  version="${GITHUB_REF_NAME#v}"
+                  awk -v heading="## $version" '
+                      found && /^## / { exit }
+                      found { print }
+                      index($0, heading) == 1 && (length($0) == length(heading) || substr($0, length(heading) + 1, 1) == " ") { found = 1 }
+                  ' CHANGELOG.md > release-notes.md
+                  grep -q '[^[:space:]]' release-notes.md || { echo "::error::CHANGELOG.md has no section for $version."; exit 1; }
+                  echo "version=$version" >> "$GITHUB_OUTPUT"
+
+            - name: Create GitHub Release
+              uses: softprops/action-gh-release@v2
+              with:
+                  name: Datalium Strata ${{ steps.notes.outputs.version }}
+                  body_path: release-notes.md
+                  files: |
+                      cli-binaries/strata-*
+                      cli-binaries/SHA256SUMS.txt
+                  fail_on_unmatched_files: true
+                  # A tag with a pre-release label (v0.9.0-preview.1) is a pre-release.
+                  prerelease: ${{ contains(github.ref_name, '-') }}
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

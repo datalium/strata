@@ -1,0 +1,269 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.datalium.dev/strata/checkpoint.schema.json",
+  "title": "Strata Checkpoint",
+  "description": "A persisted graph execution checkpoint, written by the Freeze/Flush/Evict pattern (STRATA-SPEC-002) and read back on resume. Must be interoperable between the Rust and C# runtimes.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "thread_id",
+    "status",
+    "suspended_node",
+    "next_node",
+    "frozen_state",
+    "metadata",
+    "created_at",
+    "resumed_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0", "1.9.0"],
+      "description": "'1.9.0' only for a checkpoint as a store with offload stores it (design/41-Checkpoint-Efficiency.md, 'Offload'): '1.8.0', a delta or not and of any status, at least one level of which names in 'blobs' a top-level value kept in the store's blob store instead of the row. Like '1.8.0', only a store writes it and only a store reads it, decoding it (the blobs fetched and checked against their hashes) to the checkpoint it was saved as. '1.8.0' only for a checkpoint as a store with deltas stores it (design/41-Checkpoint-Efficiency.md, 'Deltas'): a 'running' checkpoint at least one level of which is the changes to the same level of the row before it in the thread's log, its frozen_state at every level an envelope (see $defs). Only a store writes it and only a store reads it: every store decodes it to the checkpoint it was saved as, whose version the outermost envelope's checkpoint_version gives, so the engine, observers and callers never see it; a reader that predates it refuses it by this version. Otherwise '1.7.0' for a checkpoint whose status is 'running' (design/33-Durable-Execution.md), which every level of it then is, a superset of '1.6.0'; otherwise '1.6.0' for a checkpoint a level of which carries a 'graph' (design/31-Graph-Identity.md), a superset of '1.5.0'; otherwise '1.5.0' for a checkpoint a level of which carries a 'wait' (design/29-Event-Waits-And-Timers.md), a superset of '1.4.0'; otherwise '1.4.0' for a checkpoint whose status is 'ended' (design/28-Ending-A-Thread.md), which every level of it then is; otherwise '1.3.0' for a checkpoint that carries a 'decision' at any depth (design/21-Typed-Human-Signals.md); otherwise '1.2.0' for a checkpoint whose status is 'cancelled', or that nests a 'cancelled' checkpoint at any depth (design/17-Async-Execution.md); otherwise '1.1.0' for one that carries a 'nested' child (see 'nested'), and '1.0.0' for every other. A reader that does not know a version must refuse to resume it."
+    },
+    "thread_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The thread this checkpoint belongs to. In a checkpoint found under another's 'nested', the name of the subgraph node it belongs to."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["interrupted", "completed", "failed", "cancelled", "ended", "running"],
+      "description": "'running' (design/33-Durable-Execution.md): a run of a graph that checkpoints every node is going on, or its process died; written before the first node, after every node that commits, and as the claim of a resume or a recovery. It is not resumable (a run that died is recovered), has a next_node at every level, and never a wait or a resumed_at. 'completed': a run of such a graph finished; next_node is null. Other graphs write nothing between nodes or on completion. 'cancelled' (design/17-Async-Execution.md): the run was cancelled, or its deadline passed, while suspended_node was running or about to start. A 'cancelled' checkpoint is resumed exactly like a 'failed' one. 'ended' (design/28-Ending-A-Thread.md): the thread was ended where it stood, from an 'interrupted', 'failed' or 'cancelled' checkpoint; it is terminal, can't be resumed, and has no next_node."
+    },
+    "suspended_node": {
+      "type": ["string", "null"],
+      "description": "Node the graph was suspended at. Non-null when status is 'interrupted'; when status is 'failed', the node that failed; when 'cancelled', the node that was running or about to start. When 'nested' is present, the subgraph node whose child froze, failed or was stopped. When 'ended', where the thread stood when it was ended. When 'running', the node that last committed at this level (null before the first; on a resume's or a recovery's claim, what the checkpoint it claims had); when 'completed', the last node."
+    },
+    "next_node": {
+      "type": ["string", "null"],
+      "description": "Node execution resumes at. Non-null when status is 'interrupted'; when status is 'failed' or 'cancelled', suspended_node again (the node a resume re-runs). Only 'interrupted', 'failed' and 'cancelled' checkpoints can be resumed. Null when 'ended' and when 'completed'. When 'running', the node the run goes on with, never null: the node in flight if the process died, which a recovery runs again. When 'nested' is present, the subgraph node itself (equal to suspended_node): a resume re-enters it."
+    },
+    "frozen_state": {
+      "type": "object",
+      "description": "Opaque, user-defined graph state (S). Not validated further by this schema. When 'nested' is present, the state the subgraph node started with, not the child's. In a '1.8.0' or '1.9.0' checkpoint, an envelope instead, at every level: the outermost level's is $defs/deltaEnvelope, a nested level's $defs/levelEnvelope."
+    },
+    "metadata": {
+      "type": ["object", "null"],
+      "additionalProperties": { "type": "string" },
+      "description": "String key/value pairs. The caller's run metadata (design/18-Run-Observability.md: RunOptions.Metadata / RunConfig::with_metadata, e.g. 'tenant', 'incident') is stamped on every checkpoint a run writes, at every nesting level, and carried forward by a resume; null when the run had none and the engine wrote no keys of its own. The engine reserves 'error', 'error_kind', 'attempts', 'cancel_reason' and every key starting 'strata.', which caller metadata may not use. A 'failed' checkpoint (design/04-Error-Recovery.md) carries 'error' (the last error message), 'error_kind' ('transient' or 'fatal') and 'attempts' (total attempts made, as a decimal string). A 'cancelled' checkpoint (design/17-Async-Execution.md) carries 'cancel_reason': 'requested' (the caller's token), 'deadline' (the run's deadline passed) or 'timeout' (only on one nested in a 'failed' checkpoint: the enclosing subgraph node timed out). An 'ended' checkpoint (design/28-Ending-A-Thread.md) carries 'strata.end_reason' ('requested', or 'timed_out' when a wait timed out with no timeout route, design/29-Event-Waits-And-Timers.md) and, when the end named who, 'strata.ended_by', at every level."
+    },
+    "created_at": {
+      "type": "string",
+      "description": "RFC3339 timestamp string. See schema/README.md for why this is a string, not a typed date."
+    },
+    "resumed_at": {
+      "type": ["string", "null"],
+      "description": "RFC3339 timestamp string, present once the checkpoint has been resumed."
+    },
+    "nested": {
+      "$ref": "#",
+      "description": "The checkpoint of a child graph, present when suspended_node is a subgraph node (design/16-Nested-Interrupts.md): the child's own, frozen at one of its interrupt boundaries when this checkpoint is 'interrupted', failed at one of its own nodes when this one is 'failed', or stopped at one of its own nodes when this one is 'cancelled'. It has the same status as this checkpoint (an 'ended' checkpoint's child is always 'ended'), except that a 'failed' checkpoint may nest a 'cancelled' child, stopped because the subgraph node timed out (design/17-Async-Execution.md). Its thread_id is the name of that subgraph node, and it may nest further. Absent, not null, when there is no child. Its frozen_state is the state a human reviewed (or the child's last committed state, for a failure), so a resume's field overrides apply to the innermost checkpoint."
+    },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["boundary", "is_approved", "reviewer", "overrides", "decided_at"],
+      "description": "The decision in effect at this checkpoint's level when it was written (design/21-Typed-Human-Signals.md): the human's answer to the level's most recent interrupt boundary, which every node of the level sees and a resume restores. Only a resume of a checkpoint 'interrupted' at the level's own boundary (no 'nested') records one; resuming a 'failed' or 'cancelled' checkpoint keeps the one it carries. A nested checkpoint carries its own level's. Absent, not null, when no boundary of the level has been answered.",
+      "properties": {
+        "boundary": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The interrupt boundary it answered, a node of this checkpoint's level."
+        },
+        "is_approved": {
+          "type": "boolean",
+          "description": "The signal's is_approved. At a boundary with a reject route, false continued at the route."
+        },
+        "reviewer": {
+          "type": "string",
+          "description": "Who answered: the signal's reviewer_token, an identity (never a credential)."
+        },
+        "overrides": {
+          "type": "object",
+          "description": "Every override the signal applied to the level's state, by top-level field: typed ones with their JSON type, string ones as JSON strings."
+        },
+        "decided_at": {
+          "type": "string",
+          "description": "RFC3339 timestamp string: when the resume that answered began."
+        }
+      }
+    },
+    "wait": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "event_type", "wake_at"],
+      "description": "Why this level waits (design/29-Event-Waits-And-Timers.md), when it waits for more than a human with no timeout: an event, a timer, or a human with a timeout. Only an 'interrupted' level carries one, and only the innermost level of a checkpoint can. A human resume answers only a 'human' wait (or no wait); a signal of 'event_type' only an 'event' wait; the wake driver wakes a due 'timer' and times out a due 'human' or 'event' wait. Absent, not null, when the level doesn't wait or has nothing to add (a boundary with no timeout). Every key is always written.",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["human", "event", "timer"]
+        },
+        "event_type": {
+          "type": ["string", "null"],
+          "description": "The event an 'event' wait waits for; null for the other kinds."
+        },
+        "wake_at": {
+          "type": ["string", "null"],
+          "description": "RFC3339 timestamp string at whole seconds, rounded up: when a 'timer' fires, or when a 'human' or 'event' wait times out. Null for an event wait with no timeout, which is never due. A thread is due when its latest checkpoint is interrupted, not resumed, and its innermost wake_at is at or before now."
+        }
+      }
+    },
+    "graph": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version"],
+      "description": "The graph that wrote this level (design/31-Graph-Identity.md): the identity it was compiled with. A nested level carries its own subgraph's. A graph resuming or ending the thread refuses a level written by another id, by another version unless its migration accepts it, or with an identity when it has none; a level without one (written before '1.6.0', or by a graph with no identity) is resumable by any graph. Absent, not null, when the level's graph has no identity. Both keys are always written.",
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "version": {
+          "type": ["string", "null"],
+          "description": "Free text, compared exactly; null for an unversioned graph."
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "required": ["nested"] },
+      "then": {
+        "properties": {
+          "schema_version": { "enum": ["1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0", "1.9.0"] },
+          "status": { "enum": ["interrupted", "failed", "cancelled", "ended", "running"] }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "cancelled" } }, "required": ["status"] },
+      "then": { "properties": { "schema_version": { "enum": ["1.2.0", "1.3.0", "1.6.0", "1.9.0"] } } }
+    },
+    {
+      "if": { "required": ["decision"] },
+      "then": { "properties": { "schema_version": { "enum": ["1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0", "1.9.0"] } } }
+    },
+    {
+      "if": { "required": ["wait"] },
+      "then": {
+        "properties": {
+          "schema_version": { "enum": ["1.5.0", "1.6.0", "1.9.0"] },
+          "status": { "const": "interrupted" }
+        },
+        "not": { "required": ["nested"] }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "ended" } }, "required": ["status"] },
+      "then": { "properties": { "schema_version": { "enum": ["1.4.0", "1.6.0", "1.9.0"] }, "next_node": { "type": "null" } } }
+    },
+    {
+      "if": { "required": ["graph"] },
+      "then": { "properties": { "schema_version": { "enum": ["1.6.0", "1.7.0", "1.8.0", "1.9.0"] } } }
+    },
+    {
+      "if": { "properties": { "status": { "const": "running" } }, "required": ["status"] },
+      "then": {
+        "properties": {
+          "schema_version": { "enum": ["1.7.0", "1.8.0", "1.9.0"] },
+          "next_node": { "type": "string" },
+          "resumed_at": { "type": "null" }
+        },
+        "not": { "required": ["wait"] }
+      }
+    },
+    {
+      "if": { "properties": { "schema_version": { "const": "1.8.0" } }, "required": ["schema_version"] },
+      "then": {
+        "properties": {
+          "status": { "const": "running" },
+          "frozen_state": { "$ref": "#/$defs/deltaEnvelope" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "schema_version": { "const": "1.9.0" } }, "required": ["schema_version"] },
+      "then": { "properties": { "frozen_state": { "$ref": "#/$defs/deltaEnvelope" } } }
+    }
+  ],
+  "$defs": {
+    "deltaEnvelope": {
+      "type": "object",
+      "description": "The outermost level's frozen_state in a '1.8.0' or '1.9.0' checkpoint (design/41-Checkpoint-Efficiency.md, 'Encoded checkpoints'). Its first three keys say how to read the row; the rest is the level, whole or as a delta, with its offloaded values (see levelEnvelope).",
+      "required": ["checkpoint_version", "delta_of", "depth"],
+      "properties": {
+        "checkpoint_version": {
+          "type": "string",
+          "description": "The checkpoint's own schema_version, which a load restores. Never '1.8.0' or '1.9.0'."
+        },
+        "delta_of": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "The sequence of the row this one is a delta of: always the row just before it in the thread's log. Null when no level is a delta: a '1.9.0' row whose levels are whole, with offloaded values (a checkpoint that needs no encoding at all is stored as it is)."
+        },
+        "depth": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many rows back the nearest row with no delta is: a load reads this row and the depth rows before it. 0 with no delta_of; less than the store's FullEvery."
+        }
+      },
+      "allOf": [{ "$ref": "#/$defs/level" }],
+      "unevaluatedProperties": false
+    },
+    "levelEnvelope": {
+      "type": "object",
+      "description": "A nested level's frozen_state in a '1.8.0' or '1.9.0' checkpoint: the level whole, or as a delta of the same level (by depth) of the row delta_of, with its offloaded values.",
+      "allOf": [{ "$ref": "#/$defs/level" }],
+      "unevaluatedProperties": false
+    },
+    "level": {
+      "properties": {
+        "blobs": { "$ref": "#/$defs/blobs" }
+      },
+      "oneOf": [
+        {
+          "required": ["state"],
+          "properties": {
+            "state": { "description": "The level's state, whole: a level that isn't an object, or whose row before has no object there (it appeared)." }
+          }
+        },
+        {
+          "required": ["set", "unset"],
+          "properties": {
+            "set": {
+              "type": "object",
+              "description": "The top-level keys whose value changed or that are new, with their values. Decoded state keeps the base's key order, with changed keys in place and added keys after."
+            },
+            "unset": {
+              "type": "array",
+              "items": { "type": "string" },
+              "uniqueItems": true,
+              "description": "The top-level keys the base has that this level no longer does."
+            }
+          }
+        }
+      ]
+    },
+    "blobs": {
+      "type": "object",
+      "description": "'1.9.0' (design/41-Checkpoint-Efficiency.md, 'Offload'): the top-level keys of this level whose value is in the store's blob store, each absent from 'state' and 'set'. In a delta level, only a value that changed is named; one that didn't is inherited from the row before, offloaded or not. Decoded, an offloaded value of a whole level comes after the level's other keys, and its objects' keys in the order its blob holds them (sorted).",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "required": ["hash", "bytes"],
+        "properties": {
+          "hash": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "description": "sha256: and the lowercase hex SHA-256 of the blob: the value's JSON text, UTF-8, keys sorted, compact. A reader checks the blob against it."
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "The length of that text."
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  }
+}

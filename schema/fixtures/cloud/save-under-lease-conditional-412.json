@@ -1,0 +1,70 @@
+{
+  "description": "A conditional save under a lease that lost its race after a lost answer: under a lease a 412 is always another writer, so it is NotLatest / false with no look-up.",
+  "operation": "save_under_lease",
+  "checkpoint": "../checkpoint-lifecycle/running.json",
+  "lease": {
+    "thread_id": "thread_running_demo",
+    "owner": "worker-1",
+    "token": 3,
+    "expires_at": "2026-10-20T12:00:30.123Z"
+  },
+  "expected_sequence": 4,
+  "exchanges": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/sdk/checkpoints",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer {api_key}",
+          "accept": "application/json",
+          "content-type": "application/json",
+          "strata-lease-token": "3",
+          "strata-if-sequence": "4"
+        },
+        "absent_headers": [
+          "content-encoding"
+        ],
+        "body": "checkpoint"
+      },
+      "response": {
+        "lost": true
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/sdk/checkpoints",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer {api_key}",
+          "accept": "application/json",
+          "content-type": "application/json",
+          "strata-lease-token": "3",
+          "strata-if-sequence": "4"
+        },
+        "absent_headers": [
+          "content-encoding"
+        ],
+        "body": "checkpoint"
+      },
+      "response": {
+        "status": 412,
+        "headers": {},
+        "body": {
+          "status": "FAILED",
+          "code": "STRATA_CLOUD_API_PRECONDITION_FAILED",
+          "error": "The thread's latest sequence is not 4",
+          "timestamp": "2026-10-20T12:00:00.000Z",
+          "statusCode": 412
+        }
+      }
+    }
+  ],
+  "expect": {
+    "leased_save": "not_latest",
+    "min_waits_ms": [
+      200
+    ]
+  }
+}

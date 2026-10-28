@@ -1,0 +1,96 @@
+{
+  "description": "Cloud's 503 on an acquisition is retried after its Retry-After, with the same Idempotency-Key.",
+  "operation": "acquire",
+  "thread_id": "thread_running_demo",
+  "owner": "worker-1",
+  "ttl_ms": 30000,
+  "exchanges": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/sdk/leases",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer {api_key}",
+          "accept": "application/json",
+          "content-type": "application/json"
+        },
+        "absent_headers": [
+          "strata-lease-token",
+          "content-encoding"
+        ],
+        "body": {
+          "thread_id": "thread_running_demo",
+          "owner": "worker-1",
+          "ttl_ms": 30000
+        },
+        "present_headers": [
+          "idempotency-key"
+        ]
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "retry-after": "2"
+        },
+        "body": {
+          "status": "FAILED",
+          "code": "STRATA_CLOUD_API_DATABASE_ERROR",
+          "error": "The database could not take the request",
+          "timestamp": "2026-10-20T12:00:00.000Z",
+          "statusCode": 503
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/sdk/leases",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer {api_key}",
+          "accept": "application/json",
+          "content-type": "application/json"
+        },
+        "absent_headers": [
+          "strata-lease-token",
+          "content-encoding"
+        ],
+        "body": {
+          "thread_id": "thread_running_demo",
+          "owner": "worker-1",
+          "ttl_ms": 30000
+        },
+        "present_headers": [
+          "idempotency-key"
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "acquired": true,
+          "lease": {
+            "thread_id": "thread_running_demo",
+            "owner": "worker-1",
+            "token": 1,
+            "expires_at": "2026-10-20T12:00:30.123Z"
+          }
+        }
+      }
+    }
+  ],
+  "expect": {
+    "acquired": true,
+    "lease": {
+      "thread_id": "thread_running_demo",
+      "owner": "worker-1",
+      "token": 1,
+      "expires_at": "2026-10-20T12:00:30.123Z"
+    },
+    "same_header": "idempotency-key",
+    "min_waits_ms": [
+      2000
+    ]
+  }
+}

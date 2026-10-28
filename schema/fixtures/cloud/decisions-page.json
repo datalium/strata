@@ -1,0 +1,123 @@
+{
+  "description": "A first page: two decisions oldest first, one with typed overrides (SG-17) and who decided with the reviewer's notes (SG-38), one from a Cloud that sends neither, and a cursor for the rest.",
+  "operation": "decisions",
+  "query": {
+    "thread_id": null,
+    "limit": 2,
+    "cursor": null,
+    "wait_seconds": 0
+  },
+  "exchanges": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1/sdk/decisions",
+        "query": {
+          "limit": "2"
+        },
+        "headers": {
+          "authorization": "Bearer {api_key}",
+          "accept": "application/json"
+        },
+        "absent_headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store"
+        },
+        "body": {
+          "items": [
+            {
+              "approval_id": "K4Q0ZC9LZ3PE2M6TJ1U7WV8XYB5NDA",
+              "thread_id": "inc-1042",
+              "sequence": 3,
+              "decided_at": "2026-10-09T12:00:00Z",
+              "decided_by": "6f1c2a90-3b7e-4d1a-9a52-0c4e8f7b21d3",
+              "decided_by_email": "Alice@Example.com",
+              "notes": "Checked with finance",
+              "signal": {
+                "is_approved": true,
+                "reviewer_token": "alice@example.com",
+                "field_overrides": {
+                  "note": "go"
+                },
+                "overrides": {
+                  "replicas": 3,
+                  "dry_run": false,
+                  "plan": {
+                    "steps": [
+                      "drain",
+                      "restart"
+                    ]
+                  }
+                }
+              }
+            },
+            {
+              "approval_id": "M8XH2Q7F0D3PT9WLC5RVJ6NYA1ZB4E",
+              "thread_id": "inc-1043",
+              "sequence": 7,
+              "decided_at": "2026-10-09T12:00:05Z",
+              "signal": {
+                "is_approved": false,
+                "reviewer_token": "bob@example.com",
+                "field_overrides": {}
+              }
+            }
+          ],
+          "next_cursor": "ZGVjaXNpb25zOjE"
+        }
+      }
+    }
+  ],
+  "expect": {
+    "page": {
+      "items": [
+        {
+          "approval_id": "K4Q0ZC9LZ3PE2M6TJ1U7WV8XYB5NDA",
+          "thread_id": "inc-1042",
+          "sequence": 3,
+          "decided_at": "2026-10-09T12:00:00Z",
+          "decided_by": "6f1c2a90-3b7e-4d1a-9a52-0c4e8f7b21d3",
+          "decided_by_email": "Alice@Example.com",
+          "notes": "Checked with finance",
+          "signal": {
+            "is_approved": true,
+            "reviewer_token": "alice@example.com",
+            "field_overrides": {
+              "note": "go"
+            },
+            "overrides": {
+              "replicas": 3,
+              "dry_run": false,
+              "plan": {
+                "steps": [
+                  "drain",
+                  "restart"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "approval_id": "M8XH2Q7F0D3PT9WLC5RVJ6NYA1ZB4E",
+          "thread_id": "inc-1043",
+          "sequence": 7,
+          "decided_at": "2026-10-09T12:00:05Z",
+          "decided_by": null,
+          "decided_by_email": null,
+          "notes": null,
+          "signal": {
+            "is_approved": false,
+            "reviewer_token": "bob@example.com",
+            "field_overrides": {},
+            "overrides": {}
+          }
+        }
+      ],
+      "next_cursor": "ZGVjaXNpb25zOjE"
+    }
+  }
+}

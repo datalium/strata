@@ -1,0 +1,21 @@
+<Project>
+
+  <!-- design/36-Packaging-And-Versioning.md: one version for every package, the crates and the CLI.
+       .github/scripts/versions.sh checks that it equals rust/Cargo.toml's and cli/Cargo.toml's, and that a
+       release tag is "v" followed by it. -->
+  <PropertyGroup>
+    <Version>0.9.0-preview.1</Version>
+    <Authors>Datalium</Authors>
+    <Company>Datalium</Company>
+    <Copyright>Copyright (c) Datalium</Copyright>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://stratamesh.ai</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/datalium/strata</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>agents;orchestration;state-graph;llm;workflow</PackageTags>
+
+    <!-- Only the libraries under src/ that import Package.props are packages. -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+</Project>

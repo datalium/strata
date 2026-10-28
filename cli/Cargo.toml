@@ -1,0 +1,30 @@
+[package]
+name = "cli"
+# Strata's version (design/36-Packaging-And-Versioning.md); .github/scripts/versions.sh checks it.
+version = "0.9.0-preview.1"
+edition = "2024"
+description = "The strata command line: validate and view graph definitions, list and inspect threads, read checkpoint logs"
+license = "Apache-2.0"
+repository = "https://github.com/datalium/strata"
+# A binary on the GitHub release, not a crate.
+publish = false
+
+[[bin]]
+name = "strata"
+path = "src/main.rs"
+
+[dependencies]
+chrono = "0.4"
+clap = { version = "4", features = ["derive"] }
+datalium-strata = { path = "../rust/strata-core" }
+datalium-strata-memory = { path = "../rust/strata-memory" }
+ratatui = "0.29"
+serde_json = "1"
+tabled = "0.17"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+
+[dev-dependencies]
+redis = { version = "1.7.0", default-features = false }
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+tempfile = "3"

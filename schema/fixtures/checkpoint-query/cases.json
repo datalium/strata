@@ -1,0 +1,679 @@
+{
+  "description": "The query port's shared cases (design/19-Async-Queryable-Store.md; the ended thread, design/28-Ending-A-Thread.md; the waiting threads and the due cases, design/29-Event-Waits-And-Timers.md; the graph cases, design/31-Graph-Identity.md, where approve-acme-1 was written by billing version 1, approve-acme-2 and failed-acme by billing version 2, and nested-waiting by incident version 1 around an approval version 3 child; the running thread, design/33-Durable-Execution.md, which was recovered once). Every store in both engines, and the CLI, saves `seed` in order, one checkpoint at a time, then must answer every case identically. `list` pages are followed by cursor until it is null; a store that may return short pages (Redis) compares the concatenation of its pages, the others compare page by page.",
+  "seed": [
+    {
+      "schema_version": "1.0.0",
+      "thread_id": "completed-x",
+      "status": "completed",
+      "suspended_node": null,
+      "next_node": null,
+      "frozen_state": { "done": true },
+      "metadata": null,
+      "created_at": "2026-10-01T05:00:00Z",
+      "resumed_at": null
+    },
+    {
+      "schema_version": "1.6.0",
+      "thread_id": "nested-waiting",
+      "status": "interrupted",
+      "suspended_node": "Work",
+      "next_node": "Work",
+      "frozen_state": { "step": "work" },
+      "metadata": { "tenant": "initech" },
+      "created_at": "2026-10-01T06:00:00Z",
+      "resumed_at": null,
+      "nested": {
+        "schema_version": "1.6.0",
+        "thread_id": "Work",
+        "status": "interrupted",
+        "suspended_node": "Approve",
+        "next_node": "Execute",
+        "frozen_state": { "approved": false },
+        "metadata": { "tenant": "initech" },
+        "created_at": "2026-10-01T06:00:00Z",
+        "resumed_at": null,
+        "graph": { "id": "approval", "version": "3" }
+      },
+      "graph": { "id": "incident", "version": "1" }
+    },
+    {
+      "schema_version": "1.6.0",
+      "thread_id": "failed-acme",
+      "status": "interrupted",
+      "suspended_node": "Approve",
+      "next_node": "Charge",
+      "frozen_state": { "charged": false },
+      "metadata": { "tenant": "acme" },
+      "created_at": "2026-10-01T07:00:00Z",
+      "resumed_at": null,
+      "graph": { "id": "billing", "version": "2" }
+    },
+    {
+      "schema_version": "1.6.0",
+      "thread_id": "failed-acme",
+      "status": "interrupted",
+      "suspended_node": "Approve",
+      "next_node": "Charge",
+      "frozen_state": { "charged": false },
+      "metadata": { "tenant": "acme" },
+      "created_at": "2026-10-01T07:00:00Z",
+      "resumed_at": "2026-10-01T07:30:00Z",
+      "graph": { "id": "billing", "version": "2" }
+    },
+    {
+      "schema_version": "1.6.0",
+      "thread_id": "failed-acme",
+      "status": "failed",
+      "suspended_node": "Charge",
+      "next_node": "Charge",
+      "frozen_state": { "charged": false },
+      "metadata": { "tenant": "acme", "error": "gateway timeout", "error_kind": "transient", "attempts": "3" },
+      "created_at": "2026-10-01T07:31:00Z",
+      "resumed_at": null,
+      "graph": { "id": "billing", "version": "2" }
+    },
+    {
+      "schema_version": "1.0.0",
+      "thread_id": "resumed-acme",
+      "status": "interrupted",
+      "suspended_node": "Approve",
+      "next_node": "Execute",
+      "frozen_state": { "approved": false },
+      "metadata": { "tenant": "acme" },
+      "created_at": "2026-10-01T08:00:00Z",
+      "resumed_at": null
+    },
+    {
+      "schema_version": "1.6.0",
+      "thread_id": "approve-acme-1",
+      "status": "interrupted",
+      "suspended_node": "Approve",
+      "next_node": "Execute",
+      "frozen_state": { "approved": false },
+      "metadata": { "tenant": "acme", "incident": "INC-1" },
+      "created_at": "2026-10-01T09:00:00Z",
+      "resumed_at": null,
+      "graph": { "id": "billing", "version": "1" }
+    },
+    {
+      "schema_version": "1.6.0",
+      "thread_id": "approve-acme-2",
+      "status": "interrupted",
+      "suspended_node": "Approve",
+      "next_node": "Execute",
+      "frozen_state": { "approved": false },
+      "metadata": { "tenant": "acme", "incident": "INC-2" },
+      "created_at": "2026-10-01T10:00:00Z",
+      "resumed_at": null,
+      "graph": { "id": "billing", "version": "2" }
+    },
+    {
+      "schema_version": "1.0.0",
+      "thread_id": "approve-globex",
+      "status": "interrupted",
+      "suspended_node": "Approve",
+      "next_node": "Execute",
+      "frozen_state": { "approved": false },
+      "metadata": { "tenant": "globex" },
+      "created_at": "2026-10-01T10:00:00Z",
+      "resumed_at": null
+    },
+    {
+      "schema_version": "1.0.0",
+      "thread_id": "resumed-acme",
+      "status": "interrupted",
+      "suspended_node": "Approve",
+      "next_node": "Execute",
+      "frozen_state": { "approved": false },
+      "metadata": { "tenant": "acme" },
+      "created_at": "2026-10-01T08:00:00Z",
+      "resumed_at": "2026-10-01T11:00:00Z"
+    },
+    {
+      "schema_version": "1.2.0",
+      "thread_id": "cancelled-nested",
+      "status": "cancelled",
+      "suspended_node": "Work",
+      "next_node": "Work",
+      "frozen_state": { "step": "work" },
+      "metadata": { "tenant": "acme", "cancel_reason": "requested" },
+      "created_at": "2026-10-01T12:00:00Z",
+      "resumed_at": null,
+      "nested": {
+        "schema_version": "1.2.0",
+        "thread_id": "Work",
+        "status": "cancelled",
+        "suspended_node": "Send",
+        "next_node": "Send",
+        "frozen_state": { "sent": false },
+        "metadata": { "tenant": "acme", "cancel_reason": "requested" },
+        "created_at": "2026-10-01T12:00:00Z",
+        "resumed_at": null
+      }
+    },
+    {
+      "schema_version": "1.0.0",
+      "thread_id": "ended-acme",
+      "status": "interrupted",
+      "suspended_node": "Approve",
+      "next_node": "Execute",
+      "frozen_state": { "approved": false },
+      "metadata": { "tenant": "acme" },
+      "created_at": "2026-10-01T04:00:00Z",
+      "resumed_at": null
+    },
+    {
+      "schema_version": "1.4.0",
+      "thread_id": "ended-acme",
+      "status": "ended",
+      "suspended_node": "Approve",
+      "next_node": null,
+      "frozen_state": { "approved": false },
+      "metadata": { "tenant": "acme", "strata.end_reason": "requested", "strata.ended_by": "oncall" },
+      "created_at": "2026-10-01T04:30:00Z",
+      "resumed_at": null
+    },
+    {
+      "schema_version": "1.5.0",
+      "thread_id": "timer-initech",
+      "status": "interrupted",
+      "suspended_node": "Window",
+      "next_node": "Check",
+      "frozen_state": { "checks": 1 },
+      "metadata": { "tenant": "initech" },
+      "created_at": "2026-10-01T03:00:00Z",
+      "resumed_at": null,
+      "wait": { "kind": "timer", "event_type": null, "wake_at": "2026-10-01T13:00:00Z" }
+    },
+    {
+      "schema_version": "1.5.0",
+      "thread_id": "event-globex",
+      "status": "interrupted",
+      "suspended_node": "Deploying",
+      "next_node": "Verify",
+      "frozen_state": { "deployed": false },
+      "metadata": { "tenant": "globex" },
+      "created_at": "2026-10-01T02:00:00Z",
+      "resumed_at": null,
+      "wait": { "kind": "event", "event_type": "deployment.finished", "wake_at": "2026-10-01T14:00:00Z" }
+    },
+    {
+      "schema_version": "1.5.0",
+      "thread_id": "event-forever",
+      "status": "interrupted",
+      "suspended_node": "Deploying",
+      "next_node": "Verify",
+      "frozen_state": { "deployed": false },
+      "metadata": { "tenant": "globex" },
+      "created_at": "2026-10-01T01:00:00Z",
+      "resumed_at": null,
+      "wait": { "kind": "event", "event_type": "deployment.finished", "wake_at": null }
+    },
+    {
+      "schema_version": "1.5.0",
+      "thread_id": "timer-resumed",
+      "status": "interrupted",
+      "suspended_node": "Window",
+      "next_node": "Check",
+      "frozen_state": { "checks": 2 },
+      "metadata": { "tenant": "initech" },
+      "created_at": "2026-10-01T00:30:00Z",
+      "resumed_at": null,
+      "wait": { "kind": "timer", "event_type": null, "wake_at": "2026-10-01T05:00:00Z" }
+    },
+    {
+      "schema_version": "1.5.0",
+      "thread_id": "timer-resumed",
+      "status": "interrupted",
+      "suspended_node": "Window",
+      "next_node": "Check",
+      "frozen_state": { "checks": 2 },
+      "metadata": { "tenant": "initech" },
+      "created_at": "2026-10-01T00:30:00Z",
+      "resumed_at": "2026-10-01T00:45:00Z",
+      "wait": { "kind": "timer", "event_type": null, "wake_at": "2026-10-01T05:00:00Z" }
+    },
+    {
+      "schema_version": "1.5.0",
+      "thread_id": "nested-timer",
+      "status": "interrupted",
+      "suspended_node": "Verify",
+      "next_node": "Verify",
+      "frozen_state": { "step": "verify" },
+      "metadata": { "tenant": "initech" },
+      "created_at": "2026-10-01T00:15:00Z",
+      "resumed_at": null,
+      "nested": {
+        "schema_version": "1.5.0",
+        "thread_id": "Verify",
+        "status": "interrupted",
+        "suspended_node": "Window",
+        "next_node": "Check",
+        "frozen_state": { "checks": 1 },
+        "metadata": { "tenant": "initech" },
+        "created_at": "2026-10-01T00:15:00Z",
+        "resumed_at": null,
+        "wait": { "kind": "timer", "event_type": null, "wake_at": "2026-10-01T12:30:00Z" }
+      }
+    },
+    {
+      "schema_version": "1.7.0",
+      "thread_id": "running-initech",
+      "status": "running",
+      "suspended_node": "Plan",
+      "next_node": "Execute",
+      "frozen_state": { "plan": "restart api" },
+      "metadata": { "tenant": "initech", "strata.hops": "1" },
+      "created_at": "2026-10-01T00:05:00Z",
+      "resumed_at": null
+    },
+    {
+      "schema_version": "1.7.0",
+      "thread_id": "running-initech",
+      "status": "running",
+      "suspended_node": "Plan",
+      "next_node": "Execute",
+      "frozen_state": { "plan": "restart api" },
+      "metadata": { "tenant": "initech", "strata.hops": "1", "strata.recoveries": "1" },
+      "created_at": "2026-10-01T00:06:00Z",
+      "resumed_at": null
+    }
+  ],
+  "summaries": {
+    "timer-initech": {
+      "sequence": 0,
+      "state": "interrupted",
+      "status": "interrupted",
+      "suspended_node": "Window",
+      "next_node": "Check",
+      "waiting_at": ["Window"],
+      "metadata": { "tenant": "initech" },
+      "updated_at": "2026-10-01T03:00:00Z",
+      "schema_version": "1.5.0",
+      "wait": { "kind": "timer", "event_type": null, "wake_at": "2026-10-01T13:00:00Z" },
+      "graph": null
+    },
+    "event-globex": {
+      "sequence": 0,
+      "state": "interrupted",
+      "status": "interrupted",
+      "suspended_node": "Deploying",
+      "next_node": "Verify",
+      "waiting_at": ["Deploying"],
+      "metadata": { "tenant": "globex" },
+      "updated_at": "2026-10-01T02:00:00Z",
+      "schema_version": "1.5.0",
+      "wait": { "kind": "event", "event_type": "deployment.finished", "wake_at": "2026-10-01T14:00:00Z" },
+      "graph": null
+    },
+    "event-forever": {
+      "sequence": 0,
+      "state": "interrupted",
+      "status": "interrupted",
+      "suspended_node": "Deploying",
+      "next_node": "Verify",
+      "waiting_at": ["Deploying"],
+      "metadata": { "tenant": "globex" },
+      "updated_at": "2026-10-01T01:00:00Z",
+      "schema_version": "1.5.0",
+      "wait": { "kind": "event", "event_type": "deployment.finished", "wake_at": null },
+      "graph": null
+    },
+    "timer-resumed": {
+      "sequence": 1,
+      "state": "resumed",
+      "status": "interrupted",
+      "suspended_node": "Window",
+      "next_node": "Check",
+      "waiting_at": ["Window"],
+      "metadata": { "tenant": "initech" },
+      "updated_at": "2026-10-01T00:45:00Z",
+      "schema_version": "1.5.0",
+      "wait": { "kind": "timer", "event_type": null, "wake_at": "2026-10-01T05:00:00Z" },
+      "graph": null
+    },
+    "nested-timer": {
+      "sequence": 0,
+      "state": "interrupted",
+      "status": "interrupted",
+      "suspended_node": "Verify",
+      "next_node": "Verify",
+      "waiting_at": ["Verify", "Window"],
+      "metadata": { "tenant": "initech" },
+      "updated_at": "2026-10-01T00:15:00Z",
+      "schema_version": "1.5.0",
+      "wait": { "kind": "timer", "event_type": null, "wake_at": "2026-10-01T12:30:00Z" },
+      "graph": null
+    },
+    "ended-acme": {
+      "sequence": 1,
+      "state": "ended",
+      "status": "ended",
+      "suspended_node": "Approve",
+      "next_node": null,
+      "waiting_at": ["Approve"],
+      "metadata": { "tenant": "acme", "strata.end_reason": "requested", "strata.ended_by": "oncall" },
+      "updated_at": "2026-10-01T04:30:00Z",
+      "schema_version": "1.4.0",
+      "wait": null,
+      "graph": null
+    },
+    "cancelled-nested": {
+      "sequence": 0,
+      "state": "cancelled",
+      "status": "cancelled",
+      "suspended_node": "Work",
+      "next_node": "Work",
+      "waiting_at": ["Work", "Send"],
+      "metadata": { "tenant": "acme", "cancel_reason": "requested" },
+      "updated_at": "2026-10-01T12:00:00Z",
+      "schema_version": "1.2.0",
+      "wait": null,
+      "graph": null
+    },
+    "resumed-acme": {
+      "sequence": 1,
+      "state": "resumed",
+      "status": "interrupted",
+      "suspended_node": "Approve",
+      "next_node": "Execute",
+      "waiting_at": ["Approve"],
+      "metadata": { "tenant": "acme" },
+      "updated_at": "2026-10-01T11:00:00Z",
+      "schema_version": "1.0.0",
+      "wait": null,
+      "graph": null
+    },
+    "approve-globex": {
+      "sequence": 0,
+      "state": "interrupted",
+      "status": "interrupted",
+      "suspended_node": "Approve",
+      "next_node": "Execute",
+      "waiting_at": ["Approve"],
+      "metadata": { "tenant": "globex" },
+      "updated_at": "2026-10-01T10:00:00Z",
+      "schema_version": "1.0.0",
+      "wait": null,
+      "graph": null
+    },
+    "approve-acme-2": {
+      "sequence": 0,
+      "state": "interrupted",
+      "status": "interrupted",
+      "suspended_node": "Approve",
+      "next_node": "Execute",
+      "waiting_at": ["Approve"],
+      "metadata": { "tenant": "acme", "incident": "INC-2" },
+      "updated_at": "2026-10-01T10:00:00Z",
+      "schema_version": "1.6.0",
+      "wait": null,
+      "graph": { "id": "billing", "version": "2" }
+    },
+    "approve-acme-1": {
+      "sequence": 0,
+      "state": "interrupted",
+      "status": "interrupted",
+      "suspended_node": "Approve",
+      "next_node": "Execute",
+      "waiting_at": ["Approve"],
+      "metadata": { "tenant": "acme", "incident": "INC-1" },
+      "updated_at": "2026-10-01T09:00:00Z",
+      "schema_version": "1.6.0",
+      "wait": null,
+      "graph": { "id": "billing", "version": "1" }
+    },
+    "failed-acme": {
+      "sequence": 2,
+      "state": "failed",
+      "status": "failed",
+      "suspended_node": "Charge",
+      "next_node": "Charge",
+      "waiting_at": ["Charge"],
+      "metadata": { "tenant": "acme", "error": "gateway timeout", "error_kind": "transient", "attempts": "3" },
+      "updated_at": "2026-10-01T07:31:00Z",
+      "schema_version": "1.6.0",
+      "wait": null,
+      "graph": { "id": "billing", "version": "2" }
+    },
+    "nested-waiting": {
+      "sequence": 0,
+      "state": "interrupted",
+      "status": "interrupted",
+      "suspended_node": "Work",
+      "next_node": "Work",
+      "waiting_at": ["Work", "Approve"],
+      "metadata": { "tenant": "initech" },
+      "updated_at": "2026-10-01T06:00:00Z",
+      "schema_version": "1.6.0",
+      "wait": null,
+      "graph": { "id": "incident", "version": "1" }
+    },
+    "completed-x": {
+      "sequence": 0,
+      "state": "completed",
+      "status": "completed",
+      "suspended_node": null,
+      "next_node": null,
+      "waiting_at": [],
+      "metadata": {},
+      "updated_at": "2026-10-01T05:00:00Z",
+      "schema_version": "1.0.0",
+      "wait": null,
+      "graph": null
+    },
+    "running-initech": {
+      "sequence": 1,
+      "state": "running",
+      "status": "running",
+      "suspended_node": "Plan",
+      "next_node": "Execute",
+      "waiting_at": ["Plan"],
+      "metadata": { "tenant": "initech", "strata.hops": "1", "strata.recoveries": "1" },
+      "updated_at": "2026-10-01T00:06:00Z",
+      "schema_version": "1.7.0",
+      "wait": null,
+      "graph": null
+    }
+  },
+  "list": [
+    {
+      "name": "every thread, newest first, three to a page",
+      "query": { "limit": 3 },
+      "pages": [
+        ["cancelled-nested", "resumed-acme", "approve-globex"],
+        ["approve-acme-2", "approve-acme-1", "failed-acme"],
+        ["nested-waiting", "completed-x", "ended-acme"],
+        ["timer-initech", "event-globex", "event-forever"],
+        ["timer-resumed", "nested-timer", "running-initech"]
+      ]
+    },
+    {
+      "name": "the waiting page: for a human, an event or a timer",
+      "query": { "states": ["interrupted"], "limit": 2 },
+      "pages": [
+        ["approve-globex", "approve-acme-2"],
+        ["approve-acme-1", "nested-waiting"],
+        ["timer-initech", "event-globex"],
+        ["event-forever", "nested-timer"]
+      ]
+    },
+    {
+      "name": "the recovery sweep: failed or cancelled",
+      "query": { "states": ["failed", "cancelled"], "limit": 10 },
+      "pages": [["cancelled-nested", "failed-acme"]]
+    },
+    {
+      "name": "one tenant, any state",
+      "query": { "metadata": { "tenant": "acme" }, "limit": 2 },
+      "pages": [
+        ["cancelled-nested", "resumed-acme"],
+        ["approve-acme-2", "approve-acme-1"],
+        ["failed-acme", "ended-acme"]
+      ]
+    },
+    {
+      "name": "every metadata pair must match",
+      "query": { "states": ["interrupted"], "metadata": { "tenant": "acme", "incident": "INC-2" } },
+      "pages": [["approve-acme-2"]]
+    },
+    {
+      "name": "engine keys are filterable too",
+      "query": { "metadata": { "error_kind": "transient" } },
+      "pages": [["failed-acme"]]
+    },
+    {
+      "name": "a time window is exclusive at both ends, and the cursor survives a same-second tie",
+      "query": { "updated_after": "2026-10-01T09:00:00Z", "updated_before": "2026-10-01T12:00:00Z", "limit": 1 },
+      "pages": [["resumed-acme"], ["approve-globex"], ["approve-acme-2"]]
+    },
+    {
+      "name": "a resumed thread is not waiting any more",
+      "query": { "states": ["resumed"] },
+      "pages": [["resumed-acme", "timer-resumed"]]
+    },
+    {
+      "name": "completed",
+      "query": { "states": ["completed"] },
+      "pages": [["completed-x"]]
+    },
+    {
+      "name": "an ended thread is not waiting any more, and lists as ended",
+      "query": { "states": ["ended"] },
+      "pages": [["ended-acme"]]
+    },
+    {
+      "name": "why and by whom a thread was ended are filterable",
+      "query": { "metadata": { "strata.end_reason": "requested", "strata.ended_by": "oncall" } },
+      "pages": [["ended-acme"]]
+    },
+    {
+      "name": "due: a timer and a nested timer whose time has come, not a later timeout, a wait with none, or a resumed timer",
+      "query": { "due_by": "2026-10-01T13:00:00Z" },
+      "pages": [["timer-initech", "nested-timer"]]
+    },
+    {
+      "name": "due later: the event wait's timeout too, two to a page",
+      "query": { "due_by": "2026-10-01T14:00:00Z", "limit": 2 },
+      "pages": [["timer-initech", "event-globex"], ["nested-timer"]]
+    },
+    {
+      "name": "due, for one tenant",
+      "query": { "due_by": "2026-10-01T14:00:00Z", "metadata": { "tenant": "globex" } },
+      "pages": [["event-globex"]]
+    },
+    {
+      "name": "nothing is due before the first wake time",
+      "query": { "due_by": "2026-10-01T12:29:59Z" },
+      "pages": [[]]
+    },
+    {
+      "name": "one graph, any version",
+      "query": { "graph_id": "billing" },
+      "pages": [["approve-acme-2", "approve-acme-1", "failed-acme"]]
+    },
+    {
+      "name": "one graph at one version, one to a page",
+      "query": { "graph_id": "billing", "graph_version": "2", "limit": 1 },
+      "pages": [["approve-acme-2"], ["failed-acme"]]
+    },
+    {
+      "name": "a graph's waiting threads",
+      "query": { "graph_id": "billing", "states": ["interrupted"] },
+      "pages": [["approve-acme-2", "approve-acme-1"]]
+    },
+    {
+      "name": "a nested thread is its outermost graph's",
+      "query": { "graph_id": "incident" },
+      "pages": [["nested-waiting"]]
+    },
+    {
+      "name": "a nested level's graph is not the thread's",
+      "query": { "graph_id": "approval" },
+      "pages": [[]]
+    },
+    {
+      "name": "running: a run is going on, or its process died",
+      "query": { "states": ["running"] },
+      "pages": [["running-initech"]]
+    },
+    {
+      "name": "the dead-thread sweep: running, and not written since",
+      "query": { "states": ["running"], "updated_before": "2026-10-01T00:07:00Z" },
+      "pages": [["running-initech"]]
+    },
+    {
+      "name": "a running thread written at the cutoff is not stale yet",
+      "query": { "states": ["running"], "updated_before": "2026-10-01T00:06:00Z" },
+      "pages": [[]]
+    },
+    {
+      "name": "how often a thread was recovered is filterable",
+      "query": { "metadata": { "strata.recoveries": "1" } },
+      "pages": [["running-initech"]]
+    },
+    {
+      "name": "nothing matches",
+      "query": { "metadata": { "tenant": "nobody" } },
+      "pages": [[]]
+    }
+  ],
+  "log": [
+    {
+      "name": "a thread's log, oldest first, paged",
+      "thread_id": "failed-acme",
+      "after_sequence": null,
+      "limit": 2,
+      "sequences": [0, 1],
+      "next_after_sequence": 1
+    },
+    {
+      "name": "the rest of it",
+      "thread_id": "failed-acme",
+      "after_sequence": 1,
+      "limit": 2,
+      "sequences": [2],
+      "next_after_sequence": null
+    },
+    {
+      "name": "after a sequence",
+      "thread_id": "resumed-acme",
+      "after_sequence": 0,
+      "limit": 5,
+      "sequences": [1],
+      "next_after_sequence": null
+    },
+    {
+      "name": "an ended thread keeps its log",
+      "thread_id": "ended-acme",
+      "after_sequence": null,
+      "limit": 5,
+      "sequences": [0, 1],
+      "next_after_sequence": null
+    },
+    {
+      "name": "a resumed timer keeps its log",
+      "thread_id": "timer-resumed",
+      "after_sequence": null,
+      "limit": 5,
+      "sequences": [0, 1],
+      "next_after_sequence": null
+    },
+    {
+      "name": "a recovered thread's log holds the checkpoint and the recovery's claim of it",
+      "thread_id": "running-initech",
+      "after_sequence": null,
+      "limit": 5,
+      "sequences": [0, 1],
+      "next_after_sequence": null
+    },
+    {
+      "name": "an unknown thread",
+      "thread_id": "nobody",
+      "after_sequence": null,
+      "limit": 5,
+      "sequences": [],
+      "next_after_sequence": null
+    }
+  ]
+}

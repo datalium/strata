@@ -1,0 +1,34 @@
+{
+  "schema_version": "1.2.0",
+  "thread_id": "thread_nested_cancelled_demo",
+  "status": "cancelled",
+  "suspended_node": "Work",
+  "next_node": "Work",
+  "frozen_state": {
+    "amount": 5,
+    "log": ["prepared"],
+    "approved_by": null
+  },
+  "metadata": {
+    "cancel_reason": "requested"
+  },
+  "created_at": "2026-10-01T00:00:00Z",
+  "resumed_at": null,
+  "nested": {
+    "schema_version": "1.2.0",
+    "thread_id": "Work",
+    "status": "cancelled",
+    "suspended_node": "Send",
+    "next_node": "Send",
+    "frozen_state": {
+      "n": 10,
+      "trail": ["draft"],
+      "approved_by": null
+    },
+    "metadata": {
+      "cancel_reason": "requested"
+    },
+    "created_at": "2026-10-01T00:00:00Z",
+    "resumed_at": null
+  }
+}

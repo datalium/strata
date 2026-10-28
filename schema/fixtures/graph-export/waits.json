@@ -1,0 +1,36 @@
+{
+  "schema_version": "1.6.0",
+  "entry_point": "Plan",
+  "nodes": [
+    { "name": "Plan", "metadata": null },
+    { "name": "Approve", "metadata": null, "interrupt": { "timeout_ms": 1800000 } },
+    {
+      "name": "Deploying",
+      "metadata": null,
+      "kind": "wait",
+      "wait": { "kind": "event", "event_type": "deployment.finished", "delay_ms": null, "timeout_ms": 3600000 }
+    },
+    { "name": "Check", "metadata": null },
+    {
+      "name": "Window",
+      "metadata": { "purpose": "verification window" },
+      "kind": "wait",
+      "wait": { "kind": "timer", "event_type": null, "delay_ms": 300000, "timeout_ms": null }
+    },
+    { "name": "Close", "metadata": null },
+    { "name": "Abort", "metadata": null },
+    { "name": "Escalate", "metadata": null },
+    { "name": "Rollback", "metadata": null }
+  ],
+  "edges": [
+    { "from": "Plan", "to": "Approve", "guarded": false, "condition": null },
+    { "from": "Approve", "to": "Deploying", "guarded": false, "condition": null },
+    { "from": "Deploying", "to": "Check", "guarded": false, "condition": null },
+    { "from": "Check", "to": "Window", "guarded": true, "condition": null },
+    { "from": "Check", "to": "Close", "guarded": false, "condition": null },
+    { "from": "Window", "to": "Check", "guarded": false, "condition": null },
+    { "from": "Approve", "to": "Abort", "guarded": true, "condition": "on_reject" },
+    { "from": "Approve", "to": "Escalate", "guarded": true, "condition": "on_timeout" },
+    { "from": "Deploying", "to": "Rollback", "guarded": true, "condition": "on_timeout" }
+  ]
+}

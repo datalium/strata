@@ -1,0 +1,119 @@
+{
+  "description": "What a tool's arguments got wrong, as the generated dispatch reports it (design/20-Tool-Dispatch-And-Registry.md, \"Arguments a tool can't read\"), replayed by rust/strata-core/tests/argument_problems.rs and dotnet/tests/Datalium.Strata.Tests/Tools/ToolArgumentProblemTests.cs. Not a wire format: it pins the words an agent sends back to the model (`invalid arguments for tool 'x': <problems>`) across the two engines. Each case gives a tool's `parameters` schema, as its manifest has it, and the `arguments` as raw text. `problems` is what the engines say, or null when the arguments match the schema (a failure the rule doesn't explain is then reported in each engine's own parser's words). The rule: text that isn't JSON is `the arguments aren't valid JSON`; JSON that isn't an object is `the arguments aren't a JSON object`; otherwise every property of the schema, in UTF-8 byte order of its name, is checked: a required one that is absent is `argument 'x' is missing`; one that is null is fine unless it is required; one whose value isn't of its schema `type` is `argument 'x' must be <a string | an integer | a number | true or false | an array | an object>` (an integer is a JSON number with no fraction or exponent); a property with no `type`, or another one, isn't checked. Properties the schema doesn't name are ignored. The problems are joined with `; `.",
+  "cases": [
+    {
+      "name": "arguments that match",
+      "parameters": { "type": "object", "properties": { "sku": { "type": "string" }, "warehouseId": { "type": "integer" } }, "required": ["sku", "warehouseId"] },
+      "arguments": "{\"sku\":\"A100\",\"warehouseId\":7}",
+      "problems": null
+    },
+    {
+      "name": "text that isn't JSON",
+      "parameters": { "type": "object", "properties": { "sku": { "type": "string" } }, "required": ["sku"] },
+      "arguments": "{\"sku\": \"A100\"",
+      "problems": "the arguments aren't valid JSON"
+    },
+    {
+      "name": "an array",
+      "parameters": { "type": "object", "properties": { "sku": { "type": "string" } }, "required": ["sku"] },
+      "arguments": "[\"A100\"]",
+      "problems": "the arguments aren't a JSON object"
+    },
+    {
+      "name": "null",
+      "parameters": { "type": "object", "properties": { "sku": { "type": "string" } }, "required": ["sku"] },
+      "arguments": "null",
+      "problems": "the arguments aren't a JSON object"
+    },
+    {
+      "name": "a required argument left out",
+      "parameters": { "type": "object", "properties": { "orderId": { "type": "string" } }, "required": ["orderId"] },
+      "arguments": "{}",
+      "problems": "argument 'orderId' is missing"
+    },
+    {
+      "name": "a number for a string",
+      "parameters": { "type": "object", "properties": { "orderId": { "type": "string" } }, "required": ["orderId"] },
+      "arguments": "{\"orderId\":42}",
+      "problems": "argument 'orderId' must be a string"
+    },
+    {
+      "name": "a fraction for an integer",
+      "parameters": { "type": "object", "properties": { "count": { "type": "integer" } }, "required": ["count"] },
+      "arguments": "{\"count\":2.5}",
+      "problems": "argument 'count' must be an integer"
+    },
+    {
+      "name": "an exponent for an integer",
+      "parameters": { "type": "object", "properties": { "count": { "type": "integer" } }, "required": ["count"] },
+      "arguments": "{\"count\":1e2}",
+      "problems": "argument 'count' must be an integer"
+    },
+    {
+      "name": "a string for an integer",
+      "parameters": { "type": "object", "properties": { "count": { "type": "integer" } }, "required": ["count"] },
+      "arguments": "{\"count\":\"7\"}",
+      "problems": "argument 'count' must be an integer"
+    },
+    {
+      "name": "an integer for a number",
+      "parameters": { "type": "object", "properties": { "ratio": { "type": "number" } }, "required": ["ratio"] },
+      "arguments": "{\"ratio\":3}",
+      "problems": null
+    },
+    {
+      "name": "a string for a number",
+      "parameters": { "type": "object", "properties": { "ratio": { "type": "number" } }, "required": ["ratio"] },
+      "arguments": "{\"ratio\":\"0.5\"}",
+      "problems": "argument 'ratio' must be a number"
+    },
+    {
+      "name": "a string for a boolean",
+      "parameters": { "type": "object", "properties": { "force": { "type": "boolean" } }, "required": ["force"] },
+      "arguments": "{\"force\":\"yes\"}",
+      "problems": "argument 'force' must be true or false"
+    },
+    {
+      "name": "an object for an array",
+      "parameters": { "type": "object", "properties": { "tags": { "type": "array", "items": { "type": "string" } } }, "required": ["tags"] },
+      "arguments": "{\"tags\":{\"a\":1}}",
+      "problems": "argument 'tags' must be an array"
+    },
+    {
+      "name": "an array for an object",
+      "parameters": { "type": "object", "properties": { "labels": { "type": "object" } }, "required": ["labels"] },
+      "arguments": "{\"labels\":[1]}",
+      "problems": "argument 'labels' must be an object"
+    },
+    {
+      "name": "null for a required argument",
+      "parameters": { "type": "object", "properties": { "orderId": { "type": "string" } }, "required": ["orderId"] },
+      "arguments": "{\"orderId\":null}",
+      "problems": "argument 'orderId' must be a string"
+    },
+    {
+      "name": "null and absent optional arguments",
+      "parameters": { "type": "object", "properties": { "app": { "type": "string" }, "limit": { "type": "integer" } }, "required": [] },
+      "arguments": "{\"app\":null}",
+      "problems": null
+    },
+    {
+      "name": "an argument the schema doesn't name",
+      "parameters": { "type": "object", "properties": { "sku": { "type": "string" } }, "required": ["sku"] },
+      "arguments": "{\"sku\":\"A100\",\"colour\":7}",
+      "problems": null
+    },
+    {
+      "name": "every problem, by name",
+      "parameters": { "type": "object", "properties": { "warehouseId": { "type": "integer" }, "sku": { "type": "string" }, "force": { "type": "boolean" } }, "required": ["warehouseId", "sku"] },
+      "arguments": "{\"warehouseId\":\"seven\",\"force\":1}",
+      "problems": "argument 'force' must be true or false; argument 'sku' is missing; argument 'warehouseId' must be an integer"
+    },
+    {
+      "name": "a property with no type",
+      "parameters": { "type": "object", "properties": { "anything": {} }, "required": ["anything"] },
+      "arguments": "{\"anything\":[1,\"two\"]}",
+      "problems": null
+    }
+  ]
+}

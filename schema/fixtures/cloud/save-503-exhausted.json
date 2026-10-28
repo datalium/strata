@@ -1,0 +1,141 @@
+{
+  "description": "Four attempts, all 503: Unavailable, carrying the last status, code and Retry-After.",
+  "operation": "save",
+  "checkpoint": "../checkpoint-lifecycle/frozen.json",
+  "exchanges": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/sdk/checkpoints",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer {api_key}",
+          "accept": "application/json",
+          "content-type": "application/json"
+        },
+        "absent_headers": [
+          "strata-if-sequence",
+          "content-encoding"
+        ],
+        "body": "checkpoint"
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "retry-after": "2"
+        },
+        "body": {
+          "status": "FAILED",
+          "code": "STRATA_CLOUD_API_DATABASE_ERROR",
+          "error": "The database could not take the request",
+          "timestamp": "2026-10-09T12:00:00.000Z",
+          "statusCode": 503
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/sdk/checkpoints",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer {api_key}",
+          "accept": "application/json",
+          "content-type": "application/json"
+        },
+        "absent_headers": [
+          "strata-if-sequence",
+          "content-encoding"
+        ],
+        "body": "checkpoint"
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "retry-after": "2"
+        },
+        "body": {
+          "status": "FAILED",
+          "code": "STRATA_CLOUD_API_DATABASE_ERROR",
+          "error": "The database could not take the request",
+          "timestamp": "2026-10-09T12:00:00.000Z",
+          "statusCode": 503
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/sdk/checkpoints",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer {api_key}",
+          "accept": "application/json",
+          "content-type": "application/json"
+        },
+        "absent_headers": [
+          "strata-if-sequence",
+          "content-encoding"
+        ],
+        "body": "checkpoint"
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "retry-after": "2"
+        },
+        "body": {
+          "status": "FAILED",
+          "code": "STRATA_CLOUD_API_DATABASE_ERROR",
+          "error": "The database could not take the request",
+          "timestamp": "2026-10-09T12:00:00.000Z",
+          "statusCode": 503
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/sdk/checkpoints",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer {api_key}",
+          "accept": "application/json",
+          "content-type": "application/json"
+        },
+        "absent_headers": [
+          "strata-if-sequence",
+          "content-encoding"
+        ],
+        "body": "checkpoint"
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "retry-after": "2"
+        },
+        "body": {
+          "status": "FAILED",
+          "code": "STRATA_CLOUD_API_DATABASE_ERROR",
+          "error": "The database could not take the request",
+          "timestamp": "2026-10-09T12:00:00.000Z",
+          "statusCode": 503
+        }
+      }
+    }
+  ],
+  "expect": {
+    "error": {
+      "kind": "unavailable",
+      "status": 503,
+      "code": "STRATA_CLOUD_API_DATABASE_ERROR",
+      "attempts": 4,
+      "retry_after_ms": 2000
+    },
+    "min_waits_ms": [
+      2000,
+      2000,
+      2000
+    ]
+  }
+}

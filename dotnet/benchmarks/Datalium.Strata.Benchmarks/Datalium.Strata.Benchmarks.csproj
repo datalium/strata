@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- design/37-Benchmarks.md (SG-27): BenchmarkDotNet microbenchmarks of the engine, and the profile
+       (latency percentiles, throughput under concurrency, memory per suspended thread, the stores). In the
+       solution so that every build compiles it; not a package (dotnet/Directory.Build.props). The Rust twin
+       is rust/strata-bench. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- What a service runs with, and what the throughput scenarios should be measured under. -->
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BenchmarkDotNet" Version="0.15.8" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Datalium.Strata\Datalium.Strata.csproj" />
+    <ProjectReference Include="..\..\src\Datalium.Strata.Storage\Datalium.Strata.Storage.csproj" />
+  </ItemGroup>
+
+</Project>

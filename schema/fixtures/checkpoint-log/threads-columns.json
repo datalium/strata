@@ -1,0 +1,10 @@
+[
+  { "name": "thread_id", "type": "TEXT", "notnull": true, "pk": 1 },
+  { "name": "sequence", "type": "INTEGER", "notnull": true, "pk": 0 },
+  { "name": "state", "type": "TEXT", "notnull": true, "pk": 0 },
+  { "name": "updated_at", "type": "TEXT", "notnull": true, "pk": 0 },
+  { "name": "metadata", "type": "TEXT", "notnull": false, "pk": 0 },
+  { "name": "wake_at", "type": "TEXT", "notnull": false, "pk": 0 },
+  { "name": "graph_id", "type": "TEXT", "notnull": false, "pk": 0 },
+  { "name": "graph_version", "type": "TEXT", "notnull": false, "pk": 0 }
+]

@@ -1,0 +1,4 @@
+[
+  { "name": "table_name", "type": "TEXT", "notnull": true, "pk": 1 },
+  { "name": "dimensions", "type": "INTEGER", "notnull": true, "pk": 0 }
+]

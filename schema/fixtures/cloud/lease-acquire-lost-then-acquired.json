@@ -1,0 +1,86 @@
+{
+  "description": "An acquisition whose first answer is lost: the retry carries the same Idempotency-Key, so Cloud answers the lease the first attempt took, acquired true, not 'held by worker-1'.",
+  "operation": "acquire",
+  "thread_id": "thread_running_demo",
+  "owner": "worker-1",
+  "ttl_ms": 30000,
+  "exchanges": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/sdk/leases",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer {api_key}",
+          "accept": "application/json",
+          "content-type": "application/json"
+        },
+        "absent_headers": [
+          "strata-lease-token",
+          "content-encoding"
+        ],
+        "body": {
+          "thread_id": "thread_running_demo",
+          "owner": "worker-1",
+          "ttl_ms": 30000
+        },
+        "present_headers": [
+          "idempotency-key"
+        ]
+      },
+      "response": {
+        "lost": true
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/sdk/leases",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer {api_key}",
+          "accept": "application/json",
+          "content-type": "application/json"
+        },
+        "absent_headers": [
+          "strata-lease-token",
+          "content-encoding"
+        ],
+        "body": {
+          "thread_id": "thread_running_demo",
+          "owner": "worker-1",
+          "ttl_ms": 30000
+        },
+        "present_headers": [
+          "idempotency-key"
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "acquired": true,
+          "lease": {
+            "thread_id": "thread_running_demo",
+            "owner": "worker-1",
+            "token": 2,
+            "expires_at": "2026-10-20T12:00:30.123Z"
+          }
+        }
+      }
+    }
+  ],
+  "expect": {
+    "acquired": true,
+    "lease": {
+      "thread_id": "thread_running_demo",
+      "owner": "worker-1",
+      "token": 2,
+      "expires_at": "2026-10-20T12:00:30.123Z"
+    },
+    "same_header": "idempotency-key",
+    "min_waits_ms": [
+      200
+    ]
+  }
+}

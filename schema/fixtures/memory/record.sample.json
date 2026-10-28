@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.0.0",
+  "namespace": "incidents",
+  "tenant": "acme",
+  "id": "0199f1c2-7a10-7c3e-9d41-2b6f0e8a5c11",
+  "embedding": {
+    "model": "openai/text-embedding-3-small",
+    "vector": [0.125, -0.5, 0.25, 0.75]
+  },
+  "content": {
+    "title": "Error rate on checkout-api",
+    "root_cause": "inventory-api's connection pool is exhausted",
+    "action": "kubernetes.rollback",
+    "recovered": true
+  },
+  "text": "Alert: Error rate on checkout-api. Found: latency inventory-api; saturation postgres.",
+  "metadata": {
+    "service": "checkout-api",
+    "scenario": "db-saturation"
+  },
+  "created_at": "2026-10-21T14:02:11Z",
+  "updated_at": "2026-10-21T14:05:47Z"
+}

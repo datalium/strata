@@ -1,0 +1,76 @@
+name: Bug report
+description: Something in Strata doesn't work as documented.
+labels: ['bug']
+body:
+    - type: markdown
+      attributes:
+          value: |
+              Thanks for reporting a bug. **Security issues don't go here:** follow [SECURITY.md](https://github.com/datalium/strata/blob/main/SECURITY.md) instead.
+
+              Before you open it, check the [Known limitations](https://stratamesh.dev/reference/known-limitations/) and the existing issues.
+
+    - type: input
+      id: version
+      attributes:
+          label: Strata version
+          description: The package, crate or CLI version (`strata --version`).
+          placeholder: 0.9.0-preview.1
+      validations:
+          required: true
+
+    - type: dropdown
+      id: where
+      attributes:
+          label: Where does it happen?
+          multiple: true
+          options:
+              - .NET (C#)
+              - Rust
+              - strata CLI
+              - Not sure
+      validations:
+          required: true
+
+    - type: input
+      id: package
+      attributes:
+          label: Package or crate
+          description: For example `Datalium.Strata.Storage` or `datalium-strata-memory`, and the store you use, if it's about storage.
+          placeholder: Datalium.Strata.Storage, Postgres store
+
+    - type: input
+      id: environment
+      attributes:
+          label: Environment
+          description: Operating system, and the .NET SDK or Rust version.
+          placeholder: Ubuntu 24.04, .NET 10.0.100
+
+    - type: textarea
+      id: what-happened
+      attributes:
+          label: What happened?
+          description: Include the full error message or stack trace.
+      validations:
+          required: true
+
+    - type: textarea
+      id: expected
+      attributes:
+          label: What did you expect to happen?
+      validations:
+          required: true
+
+    - type: textarea
+      id: repro
+      attributes:
+          label: How to reproduce it
+          description: The smallest graph or program that shows the bug. A link to a repository is fine too.
+          render: text
+      validations:
+          required: true
+
+    - type: textarea
+      id: more
+      attributes:
+          label: Anything else?
+          description: Logs, run events, a checkpoint (`strata checkpoint log`), or what you've already tried.

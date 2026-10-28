@@ -1,0 +1,44 @@
+{
+  "description": "The lease a thread is held under now.",
+  "operation": "get_lease",
+  "thread_id": "thread_running_demo",
+  "exchanges": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1/sdk/leases",
+        "query": {
+          "thread_id": "thread_running_demo"
+        },
+        "headers": {
+          "authorization": "Bearer {api_key}",
+          "accept": "application/json"
+        },
+        "absent_headers": [
+          "content-type"
+        ],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "lease": {
+            "thread_id": "thread_running_demo",
+            "owner": "worker-2",
+            "token": 5,
+            "expires_at": "2026-10-20T12:00:30.123Z"
+          }
+        }
+      }
+    }
+  ],
+  "expect": {
+    "lease": {
+      "thread_id": "thread_running_demo",
+      "owner": "worker-2",
+      "token": 5,
+      "expires_at": "2026-10-20T12:00:30.123Z"
+    }
+  }
+}

@@ -1,0 +1,7 @@
+[
+  { "name": "session_id", "type": "text", "notnull": true, "pk": 1 },
+  { "name": "sequence", "type": "bigint", "notnull": true, "pk": 2 },
+  { "name": "role", "type": "text", "notnull": true, "pk": 0 },
+  { "name": "content", "type": "text", "notnull": true, "pk": 0 },
+  { "name": "timestamp", "type": "text", "notnull": true, "pk": 0 }
+]

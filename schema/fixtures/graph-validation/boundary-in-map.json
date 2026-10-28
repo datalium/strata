@@ -1,0 +1,45 @@
+{
+  "schema_version": "1.6.0",
+  "entry_point": "Gate",
+  "nodes": [
+    { "name": "Gate", "metadata": null, "interrupt": { "timeout_ms": null } },
+    {
+      "name": "Fan",
+      "metadata": null,
+      "kind": "map",
+      "graph": {
+        "schema_version": "1.6.0",
+        "entry_point": "Read",
+        "nodes": [
+          { "name": "Read", "metadata": null, "interrupt": { "timeout_ms": 60000 } },
+          {
+            "name": "Window",
+            "metadata": null,
+            "kind": "wait",
+            "wait": { "kind": "timer", "event_type": null, "delay_ms": 60000, "timeout_ms": null }
+          },
+          {
+            "name": "Inner",
+            "metadata": null,
+            "kind": "subgraph",
+            "graph": {
+              "schema_version": "1.6.0",
+              "entry_point": "Sign",
+              "nodes": [
+                { "name": "Sign", "metadata": null, "interrupt": { "timeout_ms": null } }
+              ],
+              "edges": []
+            }
+          }
+        ],
+        "edges": [
+          { "from": "Read", "to": "Window", "guarded": false, "condition": null },
+          { "from": "Window", "to": "Inner", "guarded": false, "condition": null }
+        ]
+      }
+    }
+  ],
+  "edges": [
+    { "from": "Gate", "to": "Fan", "guarded": false, "condition": null }
+  ]
+}

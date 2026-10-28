@@ -1,0 +1,62 @@
+{
+  "schema_version": "1.6.0",
+  "identity": { "id": "release", "version": "2" },
+  "entry_point": "Plan",
+  "nodes": [
+    { "name": "Plan", "metadata": null },
+    { "name": "Approve", "metadata": { "role": "release-manager" }, "interrupt": { "timeout_ms": 1800000 } },
+    {
+      "name": "Gather",
+      "metadata": null,
+      "kind": "parallel_group",
+      "branches": [
+        { "name": "Logs", "metadata": null },
+        { "name": "Metrics", "metadata": null }
+      ],
+      "interrupt": { "timeout_ms": null }
+    },
+    {
+      "name": "Review",
+      "metadata": null,
+      "kind": "subgraph",
+      "graph": {
+        "schema_version": "1.6.0",
+        "entry_point": "Draft",
+        "nodes": [
+          { "name": "Draft", "metadata": null },
+          { "name": "Sign", "metadata": null, "interrupt": { "timeout_ms": null } }
+        ],
+        "edges": [
+          { "from": "Draft", "to": "Sign", "guarded": false, "condition": null }
+        ]
+      },
+      "interrupt": { "timeout_ms": 3600000 }
+    },
+    {
+      "name": "Fan",
+      "metadata": null,
+      "kind": "map",
+      "graph": {
+        "schema_version": "1.0.0",
+        "entry_point": "Check",
+        "nodes": [
+          { "name": "Check", "metadata": null }
+        ],
+        "edges": []
+      },
+      "interrupt": { "timeout_ms": 300000 }
+    },
+    { "name": "Ship", "metadata": null },
+    { "name": "Abort", "metadata": null },
+    { "name": "Escalate", "metadata": null }
+  ],
+  "edges": [
+    { "from": "Plan", "to": "Approve", "guarded": false, "condition": null },
+    { "from": "Approve", "to": "Gather", "guarded": false, "condition": null },
+    { "from": "Gather", "to": "Review", "guarded": false, "condition": null },
+    { "from": "Review", "to": "Fan", "guarded": false, "condition": null },
+    { "from": "Fan", "to": "Ship", "guarded": false, "condition": null },
+    { "from": "Approve", "to": "Abort", "guarded": true, "condition": "on_reject" },
+    { "from": "Approve", "to": "Escalate", "guarded": true, "condition": "on_timeout" }
+  ]
+}

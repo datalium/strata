@@ -1,0 +1,203 @@
+{
+  "description": "A log page Cloud stops early (about 4 MB of stored state) with more to come: the adapter asks again after it, for the rest of the limit, and returns a full page.",
+  "operation": "log",
+  "thread_id": "thread_hitl_demo",
+  "after_sequence": null,
+  "limit": 3,
+  "exchanges": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1/sdk/checkpoints",
+        "query": {
+          "thread_id": "thread_hitl_demo",
+          "limit": "3"
+        },
+        "headers": {
+          "authorization": "Bearer {api_key}",
+          "accept": "application/json"
+        },
+        "absent_headers": [
+          "content-type"
+        ],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store"
+        },
+        "body": {
+          "entries": [
+            {
+              "sequence": 0,
+              "checkpoint": {
+                "schema_version": "1.0.0",
+                "thread_id": "thread_hitl_demo",
+                "status": "interrupted",
+                "suspended_node": "PrepareWireTransfer",
+                "next_node": "ExecuteWireTransfer",
+                "frozen_state": {
+                  "invoice_generated": true,
+                  "amount": 4200.5,
+                  "currency": "USD",
+                  "approved_by": null,
+                  "is_completed": false
+                },
+                "metadata": null,
+                "created_at": "2026-09-16T00:00:00Z",
+                "resumed_at": null
+              }
+            }
+          ],
+          "next_after_sequence": 0
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1/sdk/checkpoints",
+        "query": {
+          "thread_id": "thread_hitl_demo",
+          "after_sequence": "0",
+          "limit": "2"
+        },
+        "headers": {
+          "authorization": "Bearer {api_key}",
+          "accept": "application/json"
+        },
+        "absent_headers": [
+          "content-type"
+        ],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "entries": [
+            {
+              "sequence": 1,
+              "checkpoint": {
+                "schema_version": "1.6.0",
+                "thread_id": "thread_hitl_demo",
+                "status": "interrupted",
+                "suspended_node": "PrepareWireTransfer",
+                "next_node": "ExecuteWireTransfer",
+                "frozen_state": {
+                  "invoice_generated": true,
+                  "amount": 4200.5,
+                  "currency": "USD",
+                  "approved_by": null,
+                  "is_completed": false
+                },
+                "metadata": null,
+                "created_at": "2026-09-16T00:00:00Z",
+                "resumed_at": null,
+                "graph": {
+                  "id": "wire-transfer",
+                  "version": "2"
+                }
+              }
+            },
+            {
+              "sequence": 2,
+              "checkpoint": {
+                "schema_version": "1.6.0",
+                "thread_id": "thread_hitl_demo",
+                "status": "interrupted",
+                "suspended_node": "PrepareWireTransfer",
+                "next_node": "ExecuteWireTransfer",
+                "frozen_state": {
+                  "invoice_generated": true,
+                  "amount": 4200.5,
+                  "currency": "USD",
+                  "approved_by": null,
+                  "is_completed": false
+                },
+                "metadata": null,
+                "created_at": "2026-09-16T00:00:00Z",
+                "resumed_at": "2026-09-25T17:30:00Z",
+                "graph": {
+                  "id": "wire-transfer",
+                  "version": "2"
+                }
+              }
+            }
+          ],
+          "next_after_sequence": null
+        }
+      }
+    }
+  ],
+  "expect": {
+    "sequences": [
+      0,
+      1,
+      2
+    ],
+    "checkpoints": [
+      {
+        "schema_version": "1.0.0",
+        "thread_id": "thread_hitl_demo",
+        "status": "interrupted",
+        "suspended_node": "PrepareWireTransfer",
+        "next_node": "ExecuteWireTransfer",
+        "frozen_state": {
+          "invoice_generated": true,
+          "amount": 4200.5,
+          "currency": "USD",
+          "approved_by": null,
+          "is_completed": false
+        },
+        "metadata": null,
+        "created_at": "2026-09-16T00:00:00Z",
+        "resumed_at": null
+      },
+      {
+        "schema_version": "1.6.0",
+        "thread_id": "thread_hitl_demo",
+        "status": "interrupted",
+        "suspended_node": "PrepareWireTransfer",
+        "next_node": "ExecuteWireTransfer",
+        "frozen_state": {
+          "invoice_generated": true,
+          "amount": 4200.5,
+          "currency": "USD",
+          "approved_by": null,
+          "is_completed": false
+        },
+        "metadata": null,
+        "created_at": "2026-09-16T00:00:00Z",
+        "resumed_at": null,
+        "graph": {
+          "id": "wire-transfer",
+          "version": "2"
+        }
+      },
+      {
+        "schema_version": "1.6.0",
+        "thread_id": "thread_hitl_demo",
+        "status": "interrupted",
+        "suspended_node": "PrepareWireTransfer",
+        "next_node": "ExecuteWireTransfer",
+        "frozen_state": {
+          "invoice_generated": true,
+          "amount": 4200.5,
+          "currency": "USD",
+          "approved_by": null,
+          "is_completed": false
+        },
+        "metadata": null,
+        "created_at": "2026-09-16T00:00:00Z",
+        "resumed_at": "2026-09-25T17:30:00Z",
+        "graph": {
+          "id": "wire-transfer",
+          "version": "2"
+        }
+      }
+    ],
+    "next_after_sequence": 2
+  }
+}

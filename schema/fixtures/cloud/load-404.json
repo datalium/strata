@@ -1,0 +1,39 @@
+{
+  "description": "A thread with no checkpoints: null, not an error.",
+  "operation": "load",
+  "thread_id": "thread_new",
+  "exchanges": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1/sdk/checkpoints/latest",
+        "query": {
+          "thread_id": "thread_new"
+        },
+        "headers": {
+          "authorization": "Bearer {api_key}",
+          "accept": "application/json"
+        },
+        "absent_headers": [
+          "content-type"
+        ],
+        "body": null
+      },
+      "response": {
+        "status": 404,
+        "headers": {},
+        "body": {
+          "status": "FAILED",
+          "code": "STRATA_CLOUD_API_THREAD_NOT_FOUND",
+          "error": "Thread not found",
+          "timestamp": "2026-10-09T12:00:00.000Z",
+          "statusCode": 404
+        }
+      }
+    }
+  ],
+  "expect": {
+    "checkpoint": null,
+    "sequence": null
+  }
+}

@@ -1,0 +1,181 @@
+{
+  "description": "Delta checkpoints (design/41-Checkpoint-Efficiency.md, 'Deltas'): one thread's rows as a store with deltas on stores them, and the checkpoint each decodes to. Row 0 is plain (1.7.0, stored exactly as before). Row 1 is a delta of row 0: its outer level changes 'step' and adds 'findings', and its nested level 'Work' changes 'n'. Row 2 is a delta of row 1, itself a delta: its outer level removes 'draft' and changes 'step', 'Work' is a delta again, and 'Inner', a level that appears, is whole. An encoded row has schema_version 1.8.0, and each level's frozen_state is an envelope: the outermost one carries checkpoint_version (the version a load restores), delta_of and depth, then 'state' (a whole level) or 'set' and 'unset' (a delta of the same level of the row delta_of); a nested level's has only the last. Every adapter in both engines stores each row as it is (SQL columns as for any checkpoint, frozen_state and nested holding the envelopes; a Redis list element of its JSON) and loads, lists and reads the log; the CLI reads them too. Objects compare without regard to key order.",
+  "thread_id": "t-delta",
+  "rows": [
+    {
+      "sequence": 0,
+      "stored": {
+        "schema_version": "1.7.0",
+        "thread_id": "t-delta",
+        "status": "running",
+        "suspended_node": "Work",
+        "next_node": "Work",
+        "frozen_state": { "step": 1, "evidence": "e-1", "draft": "first draft" },
+        "metadata": { "strata.hops": "1" },
+        "created_at": "2026-10-15T00:00:00Z",
+        "resumed_at": null,
+        "nested": {
+          "schema_version": "1.7.0",
+          "thread_id": "Work",
+          "status": "running",
+          "suspended_node": null,
+          "next_node": "Scan",
+          "frozen_state": { "n": 0 },
+          "metadata": { "strata.hops": "0" },
+          "created_at": "2026-10-15T00:00:00Z",
+          "resumed_at": null
+        }
+      },
+      "decoded": {
+        "schema_version": "1.7.0",
+        "thread_id": "t-delta",
+        "status": "running",
+        "suspended_node": "Work",
+        "next_node": "Work",
+        "frozen_state": { "step": 1, "evidence": "e-1", "draft": "first draft" },
+        "metadata": { "strata.hops": "1" },
+        "created_at": "2026-10-15T00:00:00Z",
+        "resumed_at": null,
+        "nested": {
+          "schema_version": "1.7.0",
+          "thread_id": "Work",
+          "status": "running",
+          "suspended_node": null,
+          "next_node": "Scan",
+          "frozen_state": { "n": 0 },
+          "metadata": { "strata.hops": "0" },
+          "created_at": "2026-10-15T00:00:00Z",
+          "resumed_at": null
+        }
+      }
+    },
+    {
+      "sequence": 1,
+      "stored": {
+        "schema_version": "1.8.0",
+        "thread_id": "t-delta",
+        "status": "running",
+        "suspended_node": "Work",
+        "next_node": "Work",
+        "frozen_state": {
+          "checkpoint_version": "1.7.0",
+          "delta_of": 0,
+          "depth": 1,
+          "set": { "step": 2, "findings": ["a"] },
+          "unset": []
+        },
+        "metadata": { "strata.hops": "1" },
+        "created_at": "2026-10-15T00:00:01Z",
+        "resumed_at": null,
+        "nested": {
+          "schema_version": "1.7.0",
+          "thread_id": "Work",
+          "status": "running",
+          "suspended_node": "Scan",
+          "next_node": "Inner",
+          "frozen_state": { "set": { "n": 1 }, "unset": [] },
+          "metadata": { "strata.hops": "1" },
+          "created_at": "2026-10-15T00:00:01Z",
+          "resumed_at": null
+        }
+      },
+      "decoded": {
+        "schema_version": "1.7.0",
+        "thread_id": "t-delta",
+        "status": "running",
+        "suspended_node": "Work",
+        "next_node": "Work",
+        "frozen_state": { "step": 2, "evidence": "e-1", "draft": "first draft", "findings": ["a"] },
+        "metadata": { "strata.hops": "1" },
+        "created_at": "2026-10-15T00:00:01Z",
+        "resumed_at": null,
+        "nested": {
+          "schema_version": "1.7.0",
+          "thread_id": "Work",
+          "status": "running",
+          "suspended_node": "Scan",
+          "next_node": "Inner",
+          "frozen_state": { "n": 1 },
+          "metadata": { "strata.hops": "1" },
+          "created_at": "2026-10-15T00:00:01Z",
+          "resumed_at": null
+        }
+      }
+    },
+    {
+      "sequence": 2,
+      "stored": {
+        "schema_version": "1.8.0",
+        "thread_id": "t-delta",
+        "status": "running",
+        "suspended_node": "Work",
+        "next_node": "Work",
+        "frozen_state": {
+          "checkpoint_version": "1.7.0",
+          "delta_of": 1,
+          "depth": 2,
+          "set": { "step": 3 },
+          "unset": ["draft"]
+        },
+        "metadata": { "strata.hops": "1" },
+        "created_at": "2026-10-15T00:00:02Z",
+        "resumed_at": null,
+        "nested": {
+          "schema_version": "1.7.0",
+          "thread_id": "Work",
+          "status": "running",
+          "suspended_node": "Inner",
+          "next_node": "Inner",
+          "frozen_state": { "set": { "n": 2 }, "unset": [] },
+          "metadata": { "strata.hops": "2" },
+          "created_at": "2026-10-15T00:00:02Z",
+          "resumed_at": null,
+          "nested": {
+            "schema_version": "1.7.0",
+            "thread_id": "Inner",
+            "status": "running",
+            "suspended_node": null,
+            "next_node": "Check",
+            "frozen_state": { "state": { "k": true } },
+            "metadata": { "strata.hops": "0" },
+            "created_at": "2026-10-15T00:00:02Z",
+            "resumed_at": null
+          }
+        }
+      },
+      "decoded": {
+        "schema_version": "1.7.0",
+        "thread_id": "t-delta",
+        "status": "running",
+        "suspended_node": "Work",
+        "next_node": "Work",
+        "frozen_state": { "step": 3, "evidence": "e-1", "findings": ["a"] },
+        "metadata": { "strata.hops": "1" },
+        "created_at": "2026-10-15T00:00:02Z",
+        "resumed_at": null,
+        "nested": {
+          "schema_version": "1.7.0",
+          "thread_id": "Work",
+          "status": "running",
+          "suspended_node": "Inner",
+          "next_node": "Inner",
+          "frozen_state": { "n": 2 },
+          "metadata": { "strata.hops": "2" },
+          "created_at": "2026-10-15T00:00:02Z",
+          "resumed_at": null,
+          "nested": {
+            "schema_version": "1.7.0",
+            "thread_id": "Inner",
+            "status": "running",
+            "suspended_node": null,
+            "next_node": "Check",
+            "frozen_state": { "k": true },
+            "metadata": { "strata.hops": "0" },
+            "created_at": "2026-10-15T00:00:02Z",
+            "resumed_at": null
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.datalium.dev/strata/history-record.schema.json",
+  "title": "Strata History Record",
+  "description": "A single persisted chat/history entry (design/03-Architecture.md ChatMessage), written and read via IHistoryStore / HistoryStore implementations.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "session_id",
+    "sequence",
+    "role",
+    "content",
+    "timestamp"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Monotonic per-session ordering; store backends may not preserve insertion order on their own."
+    },
+    "role": {
+      "type": "string",
+      "enum": ["system", "user", "assistant", "tool"]
+    },
+    "content": {
+      "type": "string"
+    },
+    "timestamp": {
+      "type": "string",
+      "description": "RFC3339 timestamp string. See schema/README.md for why this is a string, not a typed date."
+    }
+  }
+}

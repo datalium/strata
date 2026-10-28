@@ -1,0 +1,86 @@
+{
+  "description": "A conditional save whose first attempt committed and lost its response: the retry's 412 is our own write, found by loading the latest (equal, at the expected sequence + 1).",
+  "operation": "save",
+  "checkpoint": "../checkpoint-lifecycle/waiting-approval.json",
+  "expected_sequence": 3,
+  "exchanges": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/sdk/checkpoints",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer {api_key}",
+          "accept": "application/json",
+          "content-type": "application/json",
+          "strata-if-sequence": "3"
+        },
+        "absent_headers": [
+          "content-encoding"
+        ],
+        "body": "checkpoint"
+      },
+      "response": {
+        "lost": true
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/sdk/checkpoints",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer {api_key}",
+          "accept": "application/json",
+          "content-type": "application/json",
+          "strata-if-sequence": "3"
+        },
+        "absent_headers": [
+          "content-encoding"
+        ],
+        "body": "checkpoint"
+      },
+      "response": {
+        "status": 412,
+        "headers": {},
+        "body": {
+          "status": "FAILED",
+          "code": "STRATA_CLOUD_API_PRECONDITION_FAILED",
+          "error": "The thread's latest sequence is not 3",
+          "timestamp": "2026-10-09T12:00:00.000Z",
+          "statusCode": 412
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1/sdk/checkpoints/latest",
+        "query": {
+          "thread_id": "thread_approval_demo"
+        },
+        "headers": {
+          "authorization": "Bearer {api_key}",
+          "accept": "application/json"
+        },
+        "absent_headers": [
+          "content-type"
+        ],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "strata-sequence": "4"
+        },
+        "body_file": "../checkpoint-lifecycle/waiting-approval.json"
+      }
+    }
+  ],
+  "expect": {
+    "saved": true,
+    "min_waits_ms": [
+      0
+    ]
+  }
+}

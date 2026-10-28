@@ -1,0 +1,36 @@
+[package]
+name = "datalium-strata-ai"
+description = "Model calls and agents for Datalium Strata: a chat-client trait, OpenAI-compatible and Anthropic clients, streamed, observed and retried from a node, and the model-tool loop with typed answers"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+# design/44-LLM-Integration.md: HTTP and TLS for model providers live here, so they reach only the
+# programs that call models. The engine, reqwest with rustls, serde: the clients are behind features.
+[features]
+default = ["openai", "anthropic"]
+openai = []
+anthropic = []
+
+[dependencies]
+chrono = "0.4"
+datalium-strata = { workspace = true }
+futures-core = "0.3"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt", "time"] }
+
+[dev-dependencies]
+datalium-strata-memory = { workspace = true }
+metrics-util = { version = "0.20", default-features = false, features = ["debugging"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util", "sync", "time", "test-util"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }

@@ -1,0 +1,79 @@
+{
+  "description": "The next page, asked for with the cursor: the last one, a decision made with the development token (who decided, no email, no notes).",
+  "operation": "decisions",
+  "query": {
+    "thread_id": null,
+    "limit": 2,
+    "cursor": "ZGVjaXNpb25zOjE",
+    "wait_seconds": 0
+  },
+  "exchanges": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1/sdk/decisions",
+        "query": {
+          "limit": "2",
+          "cursor": "ZGVjaXNpb25zOjE"
+        },
+        "headers": {
+          "authorization": "Bearer {api_key}",
+          "accept": "application/json"
+        },
+        "absent_headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store"
+        },
+        "body": {
+          "items": [
+            {
+              "approval_id": "P2B7C4D9E1F3G5H6J8K0L2M4N6Q8RS",
+              "thread_id": "inc-1044",
+              "sequence": 1,
+              "decided_at": "2026-10-09T12:00:09Z",
+              "decided_by": "dev-console",
+              "decided_by_email": null,
+              "notes": null,
+              "signal": {
+                "is_approved": true,
+                "reviewer_token": "carol@example.com",
+                "field_overrides": {
+                  "amount": "4000"
+                }
+              }
+            }
+          ],
+          "next_cursor": null
+        }
+      }
+    }
+  ],
+  "expect": {
+    "page": {
+      "items": [
+        {
+          "approval_id": "P2B7C4D9E1F3G5H6J8K0L2M4N6Q8RS",
+          "thread_id": "inc-1044",
+          "sequence": 1,
+          "decided_at": "2026-10-09T12:00:09Z",
+          "decided_by": "dev-console",
+          "decided_by_email": null,
+          "notes": null,
+          "signal": {
+            "is_approved": true,
+            "reviewer_token": "carol@example.com",
+            "field_overrides": {
+              "amount": "4000"
+            },
+            "overrides": {}
+          }
+        }
+      ],
+      "next_cursor": null
+    }
+  }
+}

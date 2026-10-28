@@ -1,0 +1,5 @@
+[
+  { "name": "thread_id", "type": "text", "notnull": true, "pk": 1 },
+  { "name": "hash", "type": "text", "notnull": true, "pk": 2 },
+  { "name": "content", "type": "bytea", "notnull": true, "pk": 0 }
+]

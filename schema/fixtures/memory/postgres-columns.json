@@ -1,0 +1,12 @@
+[
+  { "name": "namespace", "type": "text", "notnull": true, "pk": 1 },
+  { "name": "tenant", "type": "text", "notnull": true, "pk": 2 },
+  { "name": "id", "type": "text", "notnull": true, "pk": 3 },
+  { "name": "model", "type": "text", "notnull": true, "pk": 0 },
+  { "name": "embedding", "type": "vector", "notnull": true, "pk": 0 },
+  { "name": "content", "type": "jsonb", "notnull": false, "pk": 0 },
+  { "name": "text", "type": "text", "notnull": false, "pk": 0 },
+  { "name": "metadata", "type": "jsonb", "notnull": true, "pk": 0 },
+  { "name": "created_at", "type": "text", "notnull": true, "pk": 0 },
+  { "name": "updated_at", "type": "text", "notnull": true, "pk": 0 }
+]

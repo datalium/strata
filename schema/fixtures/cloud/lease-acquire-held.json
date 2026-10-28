@@ -1,0 +1,55 @@
+{
+  "description": "An acquisition of a thread another owner holds: Held is an answer, a 200 with acquired false and the lease that holds it. Not retried.",
+  "operation": "acquire",
+  "thread_id": "thread_running_demo",
+  "owner": "worker-1",
+  "ttl_ms": 30000,
+  "exchanges": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/sdk/leases",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer {api_key}",
+          "accept": "application/json",
+          "content-type": "application/json"
+        },
+        "absent_headers": [
+          "strata-lease-token",
+          "content-encoding"
+        ],
+        "body": {
+          "thread_id": "thread_running_demo",
+          "owner": "worker-1",
+          "ttl_ms": 30000
+        },
+        "present_headers": [
+          "idempotency-key"
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "acquired": false,
+          "lease": {
+            "thread_id": "thread_running_demo",
+            "owner": "worker-2",
+            "token": 4,
+            "expires_at": "2026-10-20T12:00:12.500Z"
+          }
+        }
+      }
+    }
+  ],
+  "expect": {
+    "acquired": false,
+    "lease": {
+      "thread_id": "thread_running_demo",
+      "owner": "worker-2",
+      "token": 4,
+      "expires_at": "2026-10-20T12:00:12.500Z"
+    }
+  }
+}

@@ -1,0 +1,33 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <Import Project="..\Package.props" />
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Description>The Datalium Strata engine: typed state graphs for AI agents with compile-time validation, streaming, human-in-the-loop interrupts, durable execution and tools generated at compile time. Includes the [StrataTool] source generator.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Wired as an analyzer, not a normal reference: [StrataTool]-annotated partial
+         classes anywhere in this project's own sources get generated dispatch code.
+         Downstream projects that want the same for their own tool classes (e.g. the
+         test project's sample fixtures) must add the same analyzer reference themselves
+         — it does not propagate transitively through an ordinary ProjectReference. -->
+    <ProjectReference Include="..\Datalium.Strata.SourceGenerators\Datalium.Strata.SourceGenerators.csproj"
+                       OutputItemType="Analyzer"
+                       ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The generator ships inside this package, where the compiler looks for analyzers, so a project with a
+         PackageReference to Datalium.Strata can write [StrataTool] with no other reference
+         (design/36-Packaging-And-Versioning.md). The reference above builds it first. -->
+    <None Include="..\Datalium.Strata.SourceGenerators\bin\$(Configuration)\netstandard2.0\Datalium.Strata.SourceGenerators.dll"
+          Pack="true"
+          PackagePath="analyzers/dotnet/cs"
+          Visible="false" />
+  </ItemGroup>
+
+</Project>

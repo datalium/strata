@@ -1,0 +1,65 @@
+{
+  "schema_version": "1.3.0",
+  "entry_point": "Investigate",
+  "nodes": [
+    {
+      "name": "Investigate",
+      "metadata": null,
+      "kind": "map",
+      "graph": {
+        "schema_version": "1.0.0",
+        "entry_point": "Assess",
+        "nodes": [
+          { "name": "Assess", "metadata": null },
+          { "name": "Stray", "metadata": null }
+        ],
+        "edges": []
+      }
+    },
+    {
+      "name": "Vote",
+      "metadata": null,
+      "kind": "map",
+      "graph": {
+        "schema_version": "1.0.0",
+        "entry_point": "Ask",
+        "nodes": [{ "name": "Ask", "metadata": null }],
+        "edges": []
+      },
+      "join": { "policy": "quorum", "count": 0, "condition": null, "partial": "fail_group" }
+    },
+    {
+      "name": "Review",
+      "metadata": null,
+      "kind": "subgraph",
+      "graph": {
+        "schema_version": "1.3.0",
+        "entry_point": "Fan",
+        "nodes": [
+          {
+            "name": "Fan",
+            "metadata": null,
+            "kind": "map",
+            "graph": {
+              "schema_version": "1.0.0",
+              "entry_point": "Read",
+              "nodes": [
+                { "name": "Read", "metadata": null },
+                { "name": "Loop", "metadata": null }
+              ],
+              "edges": [
+                { "from": "Read", "to": "Loop", "guarded": false, "condition": null },
+                { "from": "Loop", "to": "Read", "guarded": false, "condition": null }
+              ]
+            }
+          }
+        ],
+        "edges": []
+      }
+    }
+  ],
+  "edges": [
+    { "from": "Investigate", "to": "Vote", "guarded": false, "condition": null },
+    { "from": "Vote", "to": "Review", "guarded": false, "condition": null }
+  ]
+}

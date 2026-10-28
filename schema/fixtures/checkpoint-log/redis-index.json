@@ -1,0 +1,43 @@
+{
+  "description": "The Redis thread index (design/19-Async-Queryable-Store.md) after saving the seed of checkpoint-query/cases.json in order. threads:waking (design/29-Event-Waits-And-Timers.md) holds the waiting threads with an innermost wake_at, scored like every other set: not event-forever (no timeout) or timer-resumed (resumed). threads:running (design/33-Durable-Execution.md) is the seventh state set. Keys are relative to the prefix; members are listed as ZRANGE ... REV WITHSCORES returns them. A score is the updated_at text's digits. Rebuilding the index from the lists alone must produce the same sets.",
+  "sets": {
+    "threads": [
+      ["cancelled-nested", 20261001120000],
+      ["resumed-acme", 20261001110000],
+      ["approve-globex", 20261001100000],
+      ["approve-acme-2", 20261001100000],
+      ["approve-acme-1", 20261001090000],
+      ["failed-acme", 20261001073100],
+      ["nested-waiting", 20261001060000],
+      ["completed-x", 20261001050000],
+      ["ended-acme", 20261001043000],
+      ["timer-initech", 20261001030000],
+      ["event-globex", 20261001020000],
+      ["event-forever", 20261001010000],
+      ["timer-resumed", 20261001004500],
+      ["nested-timer", 20261001001500],
+      ["running-initech", 20261001000600]
+    ],
+    "threads:waking": [
+      ["timer-initech", 20261001030000],
+      ["event-globex", 20261001020000],
+      ["nested-timer", 20261001001500]
+    ],
+    "threads:interrupted": [
+      ["approve-globex", 20261001100000],
+      ["approve-acme-2", 20261001100000],
+      ["approve-acme-1", 20261001090000],
+      ["nested-waiting", 20261001060000],
+      ["timer-initech", 20261001030000],
+      ["event-globex", 20261001020000],
+      ["event-forever", 20261001010000],
+      ["nested-timer", 20261001001500]
+    ],
+    "threads:failed": [["failed-acme", 20261001073100]],
+    "threads:cancelled": [["cancelled-nested", 20261001120000]],
+    "threads:resumed": [["resumed-acme", 20261001110000], ["timer-resumed", 20261001004500]],
+    "threads:completed": [["completed-x", 20261001050000]],
+    "threads:ended": [["ended-acme", 20261001043000]],
+    "threads:running": [["running-initech", 20261001000600]]
+  }
+}

@@ -1,0 +1,50 @@
+name: Feature request
+description: Suggest something Strata should do.
+labels: ['enhancement']
+body:
+    - type: markdown
+      attributes:
+          value: |
+              Thanks for the idea. For an open-ended question or an early idea, a [discussion](https://github.com/datalium/strata/discussions) may be a better start.
+
+              Check the [Known limitations](https://stratamesh.dev/reference/known-limitations/) first: it may already be planned.
+
+    - type: textarea
+      id: problem
+      attributes:
+          label: The problem
+          description: What are you trying to do, and what gets in the way today?
+      validations:
+          required: true
+
+    - type: textarea
+      id: proposal
+      attributes:
+          label: What you'd like
+          description: How you'd like it to work. A code sketch helps.
+      validations:
+          required: true
+
+    - type: textarea
+      id: alternatives
+      attributes:
+          label: Workarounds and alternatives
+          description: What you do today, and other ways you've considered.
+
+    - type: dropdown
+      id: languages
+      attributes:
+          label: Which language do you use?
+          description: Strata builds every feature in both languages, so this only helps us understand your case.
+          multiple: true
+          options:
+              - .NET (C#)
+              - Rust
+              - strata CLI
+
+    - type: checkboxes
+      id: contribute
+      attributes:
+          label: Contributing
+          options:
+              - label: I'd like to build this myself (see CONTRIBUTING.md).

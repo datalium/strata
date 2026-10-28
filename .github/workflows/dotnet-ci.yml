@@ -1,0 +1,136 @@
+name: .NET Core CI/CD
+
+on:
+    workflow_dispatch:
+    push:
+        branches: [main]
+        tags: ['v*']
+    pull_request:
+        branches: [main]
+
+jobs:
+    build-and-test:
+        name: .NET Verification & Testing
+        runs-on: ubuntu-latest
+        env:
+            STRATA_TEST_POSTGRES_URL: postgres://strata:strata@localhost:5432/strata
+            STRATA_TEST_REDIS_URL: redis://localhost:6379
+            # Makes the Postgres/Redis adapter tests fail, not skip, if the URLs above are ever missing.
+            STRATA_REQUIRE_BACKENDS: '1'
+        services:
+            postgres:
+                image: pgvector/pgvector:pg16
+                env:
+                    POSTGRES_USER: strata
+                    POSTGRES_PASSWORD: strata
+                    POSTGRES_DB: strata
+                ports:
+                    - 5432:5432
+                options: >-
+                    --health-cmd "pg_isready -U strata -d strata"
+                    --health-interval 2s
+                    --health-timeout 3s
+                    --health-retries 30
+            redis:
+                image: redis:8
+                ports:
+                    - 6379:6379
+                options: >-
+                    --health-cmd "redis-cli ping"
+                    --health-interval 2s
+                    --health-timeout 3s
+                    --health-retries 30
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Setup .NET SDK
+              uses: actions/setup-dotnet@v4
+              with:
+                  dotnet-version: '10.0.x'
+
+            # design/36-Packaging-And-Versioning.md: every manifest agrees on the version, and a release tag is
+            # "v" followed by it. Every job a tag triggers needs this one, so a tag that doesn't match the
+            # manifests publishes nothing.
+            - name: Check Versions
+              run: |
+                  if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+                      .github/scripts/versions.sh --tag "$GITHUB_REF_NAME"
+                  else
+                      .github/scripts/versions.sh
+                  fi
+
+            - name: Restore Dependencies
+              run: dotnet restore dotnet/Datalium.Strata.sln
+
+            - name: Verify Code Formatting
+              run: dotnet format dotnet/Datalium.Strata.sln --verify-no-changes
+
+            - name: Build Solution (Release Configuration)
+              run: dotnet build dotnet/Datalium.Strata.sln --configuration Release --no-restore
+
+            - name: Run Test Engine
+              run: dotnet test dotnet/Datalium.Strata.sln --configuration Release --no-build --verbosity normal
+
+            # design/37-Benchmarks.md: every benchmark runs once, with small counts, so one that fails when it
+            # runs fails here. Nothing is measured: a shared runner is too noisy.
+            - name: Run Each Benchmark Once
+              run: |
+                  dotnet run --no-build --configuration Release --project dotnet/benchmarks/Datalium.Strata.Benchmarks -- profile --quick
+                  dotnet run --no-build --configuration Release --project dotnet/benchmarks/Datalium.Strata.Benchmarks -- --filter '*' --job Dry
+
+            # Packs the five packages, checks what is in them, and builds and runs an application that knows
+            # Strata only as those packages.
+            - name: Pack and Smoke-Test the Packages
+              run: .github/scripts/pack-smoke.sh
+
+    # design/36-Packaging-And-Versioning.md, "What a tag does": every v* tag, preview or release, publishes
+    # the five packages to nuget.org.
+    #
+    # Ownership comes from the nuget.org trusted publishing policy, owned by the Datalium organization. The
+    # policy names this repository, this file (dotnet-ci.yml: don't rename it) and the "release" environment.
+    publish-nuget:
+        name: Package and Push to NuGet
+        needs: build-and-test
+        if: startsWith(github.ref, 'refs/tags/v')
+        runs-on: ubuntu-latest
+        environment: release
+        permissions:
+            contents: read
+            id-token: write # lets the job ask GitHub for the OIDC token NuGet/login swaps for a key
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Setup .NET SDK
+              uses: actions/setup-dotnet@v4
+              with:
+                  dotnet-version: '10.0.x'
+
+            - name: Check the Tag Against the Manifests
+              run: .github/scripts/versions.sh --tag "$GITHUB_REF_NAME"
+
+            # The same script the pull requests run: what is pushed is what was checked.
+            - name: Pack and Smoke-Test the Packages
+              run: .github/scripts/pack-smoke.sh
+
+            # Trusted publishing: swaps the OIDC token for a short-lived, single-use nuget.org key.
+            # Launch only: if the login fails, the push falls back to the backup key and the run says so.
+            # After launch, remove continue-on-error, the warning step and the fallback, so a failed login
+            # fails the release.
+            - name: Log In to NuGet.org
+              id: login
+              uses: NuGet/login@v1
+              continue-on-error: true
+              with:
+                  user: ${{ secrets.NUGET_USER }}
+
+            - name: Warn If the Backup Key Is Used
+              if: ${{ steps.login.outcome != 'success' }}
+              run: echo "::warning::Trusted publishing login failed. Pushing with the backup NUGET_API_KEY."
+
+            # The symbol packages (.snupkg) next to the packages go up with them.
+            - name: Push Packages to NuGet.org
+              run: >-
+                  dotnet nuget push "dotnet/artifacts/packages/*.nupkg"
+                  --source https://api.nuget.org/v3/index.json
+                  --api-key ${{ steps.login.outputs.NUGET_API_KEY || secrets.NUGET_API_KEY }}
+                  --skip-duplicate

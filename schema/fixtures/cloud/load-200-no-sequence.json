@@ -1,0 +1,33 @@
+{
+  "description": "A Cloud without the conditional save: no Strata-Sequence, so no sequence.",
+  "operation": "load",
+  "thread_id": "thread_hitl_demo",
+  "exchanges": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1/sdk/checkpoints/latest",
+        "query": {
+          "thread_id": "thread_hitl_demo"
+        },
+        "headers": {
+          "authorization": "Bearer {api_key}",
+          "accept": "application/json"
+        },
+        "absent_headers": [
+          "content-type"
+        ],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body_file": "../checkpoint-lifecycle/frozen.json"
+      }
+    }
+  ],
+  "expect": {
+    "checkpoint": "../checkpoint-lifecycle/frozen.json",
+    "sequence": null
+  }
+}

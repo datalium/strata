@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.0.0",
+  "thread_id": "thread_recovery_demo",
+  "status": "failed",
+  "suspended_node": "Charge",
+  "next_node": "Charge",
+  "frozen_state": {
+    "prepared": true,
+    "charged": false,
+    "notes": []
+  },
+  "metadata": {
+    "attempts": "2",
+    "error": "gateway timeout",
+    "error_kind": "transient"
+  },
+  "created_at": "2026-09-16T00:00:00Z",
+  "resumed_at": null
+}

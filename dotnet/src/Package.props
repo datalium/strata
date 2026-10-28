@@ -1,0 +1,28 @@
+<Project>
+
+  <!-- What makes a project one of Strata's NuGet packages (design/36-Packaging-And-Versioning.md): its XML
+       docs, its symbols with Source Link, and the shared readme. Imported by each library's project file. -->
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+
+    <!-- IntelliSense is where a consumer reads the API. Three documentation warnings are off: CS1591 (a
+         public member without a comment), CS1573 (some parameters of a member described and not others) and
+         CS0419 (a reference to a method with overloads, which resolves to the first). A reference that
+         resolves to nothing is still a warning. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591;CS1573;CS0419</NoWarn>
+
+    <!-- Symbols as a .snupkg, with the sources found through Source Link. -->
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)PACKAGE.md" Pack="true" PackagePath="README.md" Visible="false" />
+  </ItemGroup>
+
+</Project>

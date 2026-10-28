@@ -1,0 +1,48 @@
+{
+  "description": "A Cloud that predates its catch-up refuses a 1.3.0 checkpoint (one carrying a decision): not retried.",
+  "operation": "save",
+  "checkpoint": "../checkpoint-lifecycle/nested-decision.json",
+  "exchanges": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/sdk/checkpoints",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer {api_key}",
+          "accept": "application/json",
+          "content-type": "application/json"
+        },
+        "absent_headers": [
+          "strata-if-sequence",
+          "content-encoding"
+        ],
+        "body": "checkpoint"
+      },
+      "response": {
+        "status": 422,
+        "headers": {},
+        "body": {
+          "status": "FAILED",
+          "code": "STRATA_CLOUD_API_UNSUPPORTED_SCHEMA_VERSION",
+          "error": [
+            {
+              "path": "/schema_version",
+              "message": "unsupported schema_version"
+            }
+          ],
+          "timestamp": "2026-10-09T12:00:00.000Z",
+          "statusCode": 422
+        }
+      }
+    }
+  ],
+  "expect": {
+    "error": {
+      "kind": "rejected",
+      "status": 422,
+      "code": "STRATA_CLOUD_API_UNSUPPORTED_SCHEMA_VERSION",
+      "attempts": 1
+    }
+  }
+}

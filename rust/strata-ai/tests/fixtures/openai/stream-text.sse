@@ -1,0 +1,12 @@
+data: {"id":"chatcmpl-1","object":"chat.completion.chunk","model":"gpt-test-2026","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-1","object":"chat.completion.chunk","model":"gpt-test-2026","choices":[{"index":0,"delta":{"content":"Roll "},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-1","object":"chat.completion.chunk","model":"gpt-test-2026","choices":[{"index":0,"delta":{"content":"back v42."},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-1","object":"chat.completion.chunk","model":"gpt-test-2026","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: {"id":"chatcmpl-1","object":"chat.completion.chunk","model":"gpt-test-2026","choices":[],"usage":{"prompt_tokens":41,"completion_tokens":4,"total_tokens":45}}
+
+data: [DONE]
+

@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.5.0",
+  "thread_id": "thread_approval_demo",
+  "status": "interrupted",
+  "suspended_node": "Approve",
+  "next_node": "Execute",
+  "frozen_state": {
+    "plan": "restart api",
+    "presented": true,
+    "executed": false,
+    "escalated": false,
+    "aborted": false
+  },
+  "metadata": null,
+  "created_at": "2026-10-06T12:00:00Z",
+  "resumed_at": null,
+  "wait": {
+    "kind": "human",
+    "event_type": null,
+    "wake_at": "2026-10-06T12:30:00Z"
+  }
+}

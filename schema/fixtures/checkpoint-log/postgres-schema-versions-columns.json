@@ -1,0 +1,4 @@
+[
+  { "name": "component", "type": "text", "notnull": true, "pk": 1 },
+  { "name": "version", "type": "bigint", "notnull": true, "pk": 0 }
+]

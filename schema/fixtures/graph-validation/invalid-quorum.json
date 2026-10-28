@@ -1,0 +1,42 @@
+{
+  "schema_version": "1.2.0",
+  "entry_point": "Triage",
+  "nodes": [
+    { "name": "Triage", "metadata": null },
+    {
+      "name": "Vote",
+      "metadata": null,
+      "kind": "parallel_group",
+      "branches": [
+        { "name": "openai", "metadata": null },
+        { "name": "anthropic", "metadata": null }
+      ],
+      "join": { "policy": "quorum", "count": 3, "condition": null, "partial": "fail_group" }
+    },
+    {
+      "name": "Review",
+      "metadata": null,
+      "kind": "subgraph",
+      "graph": {
+        "schema_version": "1.2.0",
+        "entry_point": "Ask",
+        "nodes": [
+          {
+            "name": "Ask",
+            "metadata": null,
+            "kind": "parallel_group",
+            "branches": [
+              { "name": "a", "metadata": null }
+            ],
+            "join": { "policy": "quorum", "count": 0, "condition": null, "partial": "keep_succeeded" }
+          }
+        ],
+        "edges": []
+      }
+    }
+  ],
+  "edges": [
+    { "from": "Triage", "to": "Vote", "guarded": false, "condition": null },
+    { "from": "Vote", "to": "Review", "guarded": false, "condition": null }
+  ]
+}

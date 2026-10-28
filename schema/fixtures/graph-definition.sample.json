@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0.0",
+  "entry_point": "PrepareWireTransfer",
+  "nodes": [
+    { "name": "PrepareWireTransfer", "metadata": null },
+    { "name": "ExecuteWireTransfer", "metadata": null },
+    { "name": "ValidateApproval", "metadata": { "retry_limit": "3" } }
+  ],
+  "edges": [
+    { "from": "PrepareWireTransfer", "to": "ValidateApproval", "guarded": false, "condition": null },
+    { "from": "ValidateApproval", "to": "ExecuteWireTransfer", "guarded": false, "condition": null },
+    { "from": "ValidateApproval", "to": "PrepareWireTransfer", "guarded": true, "condition": "retry_count < 3" }
+  ]
+}

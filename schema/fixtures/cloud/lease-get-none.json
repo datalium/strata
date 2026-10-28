@@ -1,0 +1,34 @@
+{
+  "description": "A thread nobody holds: 200 with a null lease (no lease route answers 404).",
+  "operation": "get_lease",
+  "thread_id": "thread_running_demo",
+  "exchanges": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1/sdk/leases",
+        "query": {
+          "thread_id": "thread_running_demo"
+        },
+        "headers": {
+          "authorization": "Bearer {api_key}",
+          "accept": "application/json"
+        },
+        "absent_headers": [
+          "content-type"
+        ],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "lease": null
+        }
+      }
+    }
+  ],
+  "expect": {
+    "lease": null
+  }
+}

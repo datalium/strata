@@ -1,0 +1,6 @@
+[
+  { "name": "thread_id", "type": "text", "notnull": true, "pk": 1 },
+  { "name": "owner", "type": "text", "notnull": false, "pk": 0 },
+  { "name": "token", "type": "bigint", "notnull": true, "pk": 0 },
+  { "name": "expires_at", "type": "timestamp with time zone", "notnull": false, "pk": 0 }
+]

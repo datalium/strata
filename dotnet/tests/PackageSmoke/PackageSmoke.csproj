@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- design/36-Packaging-And-Versioning.md, "Proving a package works": an application that knows Strata only
+       as packages. Its Strata references are Datalium.Strata.Hosting and Datalium.Strata.AI (design/44), restored from the folder
+       .github/scripts/pack-smoke.sh packs into (nuget.config). Not in the solution: it can't restore until
+       the packages exist. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- The version this checkout packs (dotnet/Directory.Build.props), unless told another. -->
+    <StrataVersion Condition="'$(StrataVersion)' == ''">$(Version)</StrataVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Datalium.Strata.Hosting" Version="$(StrataVersion)" />
+    <PackageReference Include="Datalium.Strata.AI" Version="$(StrataVersion)" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.12" />
+  </ItemGroup>
+
+</Project>

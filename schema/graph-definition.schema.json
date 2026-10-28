@@ -1,0 +1,238 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.datalium.dev/strata/graph-definition.schema.json",
+  "title": "Strata Graph Definition",
+  "description": "Compiled graph topology (STRATA-SPEC-004), consumed by `strata graph validate` and equivalent in-process validators in both languages. A parallel group, subgraph or map node describes its inside, and a wait node what it waits for (design/22-Graph-Structure-In-Definitions.md, design/27-Map-Fan-Out.md, design/29-Event-Waits-And-Timers.md); a subgraph's or map's `graph` is a whole definition of this same shape, recursively. A compiled graph with an identity says so in `identity` (design/31-Graph-Identity.md), and an interrupt boundary in its node's `interrupt` (design/48-Boundaries-In-Definitions.md).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "entry_point", "nodes", "edges"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0"],
+      "description": "1.6.0 when a node at this level is an interrupt boundary, one with an `interrupt` (design/48-Boundaries-In-Definitions.md), else 1.5.0 when this level has an `identity` (design/31-Graph-Identity.md), else 1.4.0 when a node at this level is a wait node (design/29-Event-Waits-And-Timers.md), else 1.3.0 when a node at this level is a map (design/27-Map-Fan-Out.md), else 1.2.0 when a parallel group at this level has a `join` (design/26-Parallel-Group-Controls-And-Joins.md), else 1.1.0 when a node at this level has a `kind` (a parallel group or subgraph), else 1.0.0. Each is a superset of the one before. A nested `graph` carries its own. A reader refuses a version it doesn't know."
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version"],
+      "description": "The identity the graph was compiled with (design/31-Graph-Identity.md: CompilationOptions.GraphId / GraphVersion, CompileOptions::with_graph_id / with_graph_version), which every checkpoint level it writes carries as `graph`. Absent, not null, for a graph without one, and in a builder's export (identity is given at compile time). A subgraph's or map's child carries its own. Both keys are always written.",
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "version": {
+          "type": ["string", "null"],
+          "description": "Free text, compared exactly; null for an unversioned graph."
+        }
+      }
+    },
+    "entry_point": {
+      "type": "string",
+      "minLength": 1
+    },
+    "nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "metadata"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "metadata": {
+            "type": ["object", "null"],
+            "description": "Description only (agent, model policy, ...), set with SetNodeMetadata / set_node_metadata; the engines never read it. Keys are non-empty, never start with the reserved prefix 'strata.', and are written sorted.",
+            "additionalProperties": { "type": "string" }
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["parallel_group", "subgraph", "map", "wait"],
+            "description": "Absent for a plain node. A parallel_group has `branches`; a subgraph has `graph`; a map has `graph`, the template each item runs (design/27-Map-Fan-Out.md); a wait node has `wait` (design/29-Event-Waits-And-Timers.md)."
+          },
+          "wait": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "event_type", "delay_ms", "timeout_ms"],
+            "description": "A wait node's wait (design/29-Event-Waits-And-Timers.md): the run freezes after the node until it is answered. Every key is always written. Validation refuses a wait node inside a map's template, at any depth (STRATA_ERR_WAIT_IN_MAP).",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": ["event", "timer"],
+                "description": "An external event (a signal of `event_type` answers it), or a timer (due `delay_ms` after the node ran, or at a time computed from the state)."
+              },
+              "event_type": {
+                "type": ["string", "null"],
+                "description": "An event wait's event type; null for a timer."
+              },
+              "delay_ms": {
+                "type": ["integer", "null"],
+                "description": "A timer's fixed delay in milliseconds; null when it is computed from the state, and for an event wait."
+              },
+              "timeout_ms": {
+                "type": ["integer", "null"],
+                "description": "An event wait's timeout in milliseconds, after which it continues at its guarded `on_timeout` edge, or the thread is ended; null when it never times out, and for a timer."
+              }
+            }
+          },
+          "interrupt": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["timeout_ms"],
+            "description": "Present exactly when the node is an interrupt boundary (design/48-Boundaries-In-Definitions.md): the run freezes after the node until a human answers it. Any node but a wait node may be one. Its reject and timeout routes are its guarded `on_reject` and `on_timeout` edges, not repeated here; at a 1.6.0 level an `on_reject` edge comes only from a node with `interrupt`, and an `on_timeout` edge only from one with a timeout (the readers check this). Validation refuses one inside a map's template, at any depth (STRATA_ERR_BOUNDARY_IN_MAP). The key is always written.",
+            "properties": {
+              "timeout_ms": {
+                "type": ["integer", "null"],
+                "minimum": 0,
+                "description": "The boundary's timeout in whole milliseconds, after which it continues at its guarded `on_timeout` edge, or, with none, the thread is ended `timed_out` (design/29-Event-Waits-And-Timers.md); null when it never times out."
+              }
+            }
+          },
+          "branches": {
+            "type": "array",
+            "description": "A parallel group's branches, in declaration order. Branches have no edges: they all start when the group starts.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["name", "metadata"],
+              "properties": {
+                "name": { "type": "string", "minLength": 1 },
+                "metadata": {
+                  "type": ["object", "null"],
+                  "additionalProperties": { "type": "string" }
+                }
+              }
+            }
+          },
+          "graph": {
+            "$ref": "#",
+            "description": "A subgraph's child, or a map's template (the child graph every item runs): its whole definition, with its own schema_version. Validation names a template's nodes with a `*` segment for the item (`Investigate/*/Assess`)."
+          },
+          "join": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["policy", "count", "condition", "partial"],
+            "description": "A parallel group's or a map's join, written only when it isn't the default (`all`, `fail_group`); design/26-Parallel-Group-Controls-And-Joins.md, design/27-Map-Fan-Out.md. Concurrency limits, timeouts and a map's item limit are not exported.",
+            "properties": {
+              "policy": {
+                "type": "string",
+                "enum": ["all", "first_success", "first_matching", "quorum"],
+                "description": "When the group is done: every branch succeeded, one did, one whose result passes a predicate did, or `count` did."
+              },
+              "count": {
+                "type": ["integer", "null"],
+                "description": "A quorum's count, null for every other policy. Validation refuses one below 1, or, on a parallel group, above the branch count (STRATA_ERR_INVALID_QUORUM); a map's items are counted at run time."
+              },
+              "condition": {
+                "type": ["string", "null"],
+                "description": "A first_matching predicate's description, or null. The predicate itself isn't exported."
+              },
+              "partial": {
+                "type": "string",
+                "enum": ["fail_group", "keep_succeeded"],
+                "description": "What a join that can no longer be met does: fail the group, or reduce over every branch's outcome (failing only if none succeeded)."
+              }
+            },
+            "allOf": [
+              { "if": { "not": { "properties": { "policy": { "const": "quorum" } } } }, "then": { "properties": { "count": { "const": null } } } },
+              { "if": { "not": { "properties": { "policy": { "const": "first_matching" } } } }, "then": { "properties": { "condition": { "const": null } } } }
+            ]
+          }
+        },
+        "allOf": [
+          {
+            "if": { "required": ["kind"], "properties": { "kind": { "const": "parallel_group" } } },
+            "then": { "required": ["branches"], "not": { "required": ["graph"] } }
+          },
+          {
+            "if": { "required": ["kind"], "properties": { "kind": { "const": "subgraph" } } },
+            "then": { "required": ["graph"], "not": { "required": ["branches"] } }
+          },
+          {
+            "if": { "required": ["kind"], "properties": { "kind": { "const": "map" } } },
+            "then": { "required": ["graph"], "not": { "required": ["branches"] } }
+          },
+          {
+            "if": { "required": ["kind"], "properties": { "kind": { "const": "wait" } } },
+            "then": { "required": ["wait"], "not": { "anyOf": [{ "required": ["branches"] }, { "required": ["graph"] }, { "required": ["interrupt"] }] } },
+            "else": { "not": { "required": ["wait"] } }
+          },
+          {
+            "if": { "not": { "required": ["kind"] } },
+            "then": { "not": { "anyOf": [{ "required": ["branches"] }, { "required": ["graph"] }, { "required": ["join"] }] } }
+          },
+          {
+            "if": { "required": ["join"] },
+            "then": { "required": ["kind"], "properties": { "kind": { "enum": ["parallel_group", "map"] } } }
+          }
+        ]
+      }
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["from", "to", "guarded", "condition"],
+        "properties": {
+          "from": { "type": "string", "minLength": 1 },
+          "to": { "type": "string", "minLength": 1 },
+          "guarded": {
+            "type": "boolean",
+            "description": "True if a conditional router protects this edge from being an unguarded cycle (STRATA_ERR_UNGUARDED_CYCLE)."
+          },
+          "condition": {
+            "type": ["string", "null"],
+            "description": "Optional human-readable description of the guard condition. The engines write it only on their synthetic edges: 'on_failure' for a recovery-policy fallback (design/04-Error-Recovery.md), 'on_reject' for an interrupt boundary's reject route (design/21-Typed-Human-Signals.md), and 'on_timeout' for a timed boundary's or an event wait's timeout route (design/29-Event-Waits-And-Timers.md), all guarded."
+          }
+        }
+      }
+    }
+  },
+  "if": {
+    "required": ["nodes"],
+    "properties": { "nodes": { "contains": { "required": ["interrupt"] } } }
+  },
+  "then": {
+    "properties": { "schema_version": { "const": "1.6.0" } }
+  },
+  "else": {
+  "if": { "required": ["identity"] },
+  "then": {
+    "properties": { "schema_version": { "const": "1.5.0" } }
+  },
+  "else": {
+  "if": {
+    "required": ["nodes"],
+    "properties": { "nodes": { "contains": { "required": ["kind"], "properties": { "kind": { "const": "wait" } } } } }
+  },
+  "then": {
+    "properties": { "schema_version": { "const": "1.4.0" } }
+  },
+  "else": {
+  "if": {
+    "required": ["nodes"],
+    "properties": { "nodes": { "contains": { "required": ["kind"], "properties": { "kind": { "const": "map" } } } } }
+  },
+  "then": {
+    "properties": { "schema_version": { "const": "1.3.0" } }
+  },
+  "else": {
+    "if": {
+      "required": ["nodes"],
+      "properties": { "nodes": { "contains": { "required": ["join"] } } }
+    },
+    "then": {
+      "properties": { "schema_version": { "const": "1.2.0" } }
+    },
+    "else": {
+      "if": {
+        "required": ["nodes"],
+        "properties": { "nodes": { "contains": { "required": ["kind"] } } }
+      },
+      "then": {
+        "properties": { "schema_version": { "const": "1.1.0" } }
+      }
+    }
+  }
+  }
+  }
+  }
+}

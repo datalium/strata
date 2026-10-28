@@ -1,0 +1,62 @@
+{
+  "description": "The Redis memory store's layout (design/45-Long-Term-Memory.md, \"Redis\"), written by both engines: what a store with prefix `strata`, 4 dimensions and the default (FLAT) index leaves after upserting `record` (memory/record.sample.json without its timestamps) at its `updated_at`, when the record was first created at its `created_at`. Keys are relative to the prefix plus ':'. A key part (namespace, tenant, id) is escaped as `%` to `%25` and `:` to `%3A`, in that order, so ':' only ever separates parts. A tag is 'x' followed by the lowercase hex of the value's UTF-8 bytes, so a tag needs no escaping in a query, is never empty and can't contain the TAG separator ','. `_scope` is tag(namespace) + tag(tenant) + tag(model), `_id` is tag(id), `_meta` holds one tag(key) + tag(value) per metadata pair, keys in byte order, joined by ',' (absent when there is no metadata). `embedding` is the vector as little-endian float32 bytes (given here as hex). `content` (absent when null) and `metadata` (`{}` when empty) are JSON text, compared as JSON; `text` is absent when null. Timestamps are RFC 3339 UTC at whole seconds. The two sorted sets score as the checkpoint store's index does (design/19): the updated_at text's digits. `ids:<ns>:<tenant>` holds each id of a scope at score 0, so a listing reads it by ZRANGEBYLEX in byte order; `updated` holds each record's full key, so a purge reads it oldest first. `schema` is a hash with the `memory` component's version and the store's dimensions. `ft_create` is the index's FT.CREATE arguments after the command name; `ft_create_hnsw` the vector field's arguments with `MemoryIndex` HNSW (m 16, ef_construction 64).",
+  "prefix": "strata",
+  "dimensions": 4,
+  "record": {
+    "namespace": "incidents",
+    "tenant": "acme",
+    "id": "0199f1c2-7a10-7c3e-9d41-2b6f0e8a5c11",
+    "embedding": { "model": "openai/text-embedding-3-small", "vector": [0.125, -0.5, 0.25, 0.75] },
+    "content": {
+      "title": "Error rate on checkout-api",
+      "root_cause": "inventory-api's connection pool is exhausted",
+      "action": "kubernetes.rollback",
+      "recovered": true
+    },
+    "text": "Alert: Error rate on checkout-api. Found: latency inventory-api; saturation postgres.",
+    "metadata": { "service": "checkout-api", "scenario": "db-saturation" }
+  },
+  "created_at": "2026-10-21T14:02:11Z",
+  "updated_at": "2026-10-21T14:05:47Z",
+  "hash": {
+    "key": "memory:records:incidents:acme:0199f1c2-7a10-7c3e-9d41-2b6f0e8a5c11",
+    "fields": {
+      "namespace": "incidents",
+      "tenant": "acme",
+      "id": "0199f1c2-7a10-7c3e-9d41-2b6f0e8a5c11",
+      "model": "openai/text-embedding-3-small",
+      "embedding": "0000003e000000bf0000803e0000403f",
+      "content": "{\"title\":\"Error rate on checkout-api\",\"root_cause\":\"inventory-api's connection pool is exhausted\",\"action\":\"kubernetes.rollback\",\"recovered\":true}",
+      "text": "Alert: Error rate on checkout-api. Found: latency inventory-api; saturation postgres.",
+      "metadata": "{\"scenario\":\"db-saturation\",\"service\":\"checkout-api\"}",
+      "created_at": "2026-10-21T14:02:11Z",
+      "updated_at": "2026-10-21T14:05:47Z",
+      "_scope": "x696e636964656e7473x61636d65x6f70656e61692f746578742d656d62656464696e672d332d736d616c6c",
+      "_id": "x30313939663163322d376131302d376333652d396434312d326236663065386135633131",
+      "_meta": "x7363656e6172696fx64622d73617475726174696f6e,x73657276696365x636865636b6f75742d617069"
+    }
+  },
+  "sets": {
+    "memory:ids:incidents:acme": [["0199f1c2-7a10-7c3e-9d41-2b6f0e8a5c11", 0]],
+    "memory:updated": [["strata:memory:records:incidents:acme:0199f1c2-7a10-7c3e-9d41-2b6f0e8a5c11", 20261021140547]]
+  },
+  "schema": {
+    "key": "memory:schema",
+    "fields": { "version": "1", "dimensions": "4" }
+  },
+  "escaped_key_parts": [
+    { "part": "a:b%c", "escaped": "a%3Ab%25c" },
+    { "part": "", "escaped": "" }
+  ],
+  "ft_create": [
+    "strata:memory:idx", "ON", "HASH", "PREFIX", "1", "strata:memory:records:",
+    "SCHEMA",
+    "_scope", "TAG",
+    "_id", "TAG",
+    "_meta", "TAG",
+    "embedding", "VECTOR", "FLAT", "6", "TYPE", "FLOAT32", "DIM", "4", "DISTANCE_METRIC", "COSINE"
+  ],
+  "ft_create_hnsw": [
+    "embedding", "VECTOR", "HNSW", "10", "TYPE", "FLOAT32", "DIM", "4", "DISTANCE_METRIC", "COSINE", "M", "16", "EF_CONSTRUCTION", "64"
+  ]
+}

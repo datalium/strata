@@ -1,0 +1,61 @@
+{
+  "schema_version": "1.1.0",
+  "entry_point": "Triage",
+  "nodes": [
+    {
+      "name": "Triage",
+      "metadata": { "agent": "triage", "model_policy": "ops-reasoning-standard" }
+    },
+    {
+      "name": "Investigate",
+      "metadata": null,
+      "kind": "parallel_group",
+      "branches": [
+        { "name": "Kubernetes", "metadata": { "agent": "kubernetes-investigator" } },
+        { "name": "Prometheus", "metadata": { "agent": "metrics-investigator" } },
+        { "name": "GitHub", "metadata": null }
+      ]
+    },
+    {
+      "name": "Remediate",
+      "metadata": { "agent": "remediator" },
+      "kind": "subgraph",
+      "graph": {
+        "schema_version": "1.6.0",
+        "entry_point": "Plan",
+        "nodes": [
+          { "name": "Plan", "metadata": null },
+          { "name": "Approve", "metadata": null, "interrupt": { "timeout_ms": null } },
+          {
+            "name": "Fix",
+            "metadata": { "agent": "fixer" },
+            "kind": "subgraph",
+            "graph": {
+              "schema_version": "1.0.0",
+              "entry_point": "Apply",
+              "nodes": [
+                { "name": "Apply", "metadata": { "tool": "kubectl" } },
+                { "name": "Verify", "metadata": null }
+              ],
+              "edges": [
+                { "from": "Apply", "to": "Verify", "guarded": false, "condition": null }
+              ]
+            }
+          },
+          { "name": "Abort", "metadata": null }
+        ],
+        "edges": [
+          { "from": "Plan", "to": "Approve", "guarded": false, "condition": null },
+          { "from": "Approve", "to": "Fix", "guarded": false, "condition": null },
+          { "from": "Approve", "to": "Abort", "guarded": true, "condition": "on_reject" }
+        ]
+      }
+    },
+    { "name": "Report", "metadata": null }
+  ],
+  "edges": [
+    { "from": "Triage", "to": "Investigate", "guarded": false, "condition": null },
+    { "from": "Investigate", "to": "Remediate", "guarded": false, "condition": null },
+    { "from": "Remediate", "to": "Report", "guarded": false, "condition": null }
+  ]
+}

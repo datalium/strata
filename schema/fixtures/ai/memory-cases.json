@@ -1,0 +1,775 @@
+{
+  "description": "The memory helper's shared cases (design/45-Long-Term-Memory.md, \"The helper (PR 3)\"), replayed by rust/strata-ai/tests/memory_cases.rs and dotnet/tests/Datalium.Strata.Tests/AI/MemoryCaseTests.cs. Not a wire format: it pins the helper's labels, tenants, batching, failures and refusals across the two engines. Each case makes a fresh in-memory memory store of `dimensions` and a scripted embedder (provider `embedder.provider`, default model `embedder.model`) that answers each input with its vector in `embedder.vectors`, in order, reporting 4 input tokens per input, no output tokens, and model `embedder.model`. A call with an input in `embedder.fails` fails as a whole: an HTTP status answer with its `status`, `retry_after_ms` hint and `message` (Rust a `ChatError::status`; .NET an exception ModelFaults classifies the same way). An input in `embedder.unanswered` gets no vector (the answer has one vector fewer). The helper is made with `options` (`model`: the label; `tenant_key`; absent: the defaults). `context` null: every step is called without a node context; otherwise the steps run in order inside the one node `Memory` of a graph run with `context.metadata` as its run metadata and an observer. Steps: `remember` (an entry: `namespace`, `id`, `text`, `tenant` (absent: unset), `content` (an object), `metadata`), `remember_many` (entries), `recall` (`namespace`, `text`, `options`: `tenant` (absent: unset), `limit` (default 10), `min_similarity`, `exclude`, `metadata`; `expect` the matches in order as {id, similarity}, similarity compared to 1e-5), `get` (a key read from the store directly; `expect` the record's JSON form without schema_version and timestamps, or null). A step with `failure` must fail with a node failure of that kind, hint (`retry_after_ms`, absent: none) and message (Rust `MemoryError::Embedding`, .NET a NodeException); one with `error` must be refused with exactly that message before any embedding call (Rust `MemoryError::Store`, .NET an ArgumentException). `calls`: every embedding call's inputs, in order (absent: not checked). `events`: the run's model-call events in order as `ModelCallStarted <operation> <model> <provider>` and `ModelCallCompleted <operation> <Result> <input tokens, or - when none>` (absent: not checked).",
+  "dimensions": 3,
+  "embedder": {
+    "provider": "scripted",
+    "model": "embed-1",
+    "vectors": {
+      "disk full on db-1": [
+        1,
+        0,
+        0
+      ],
+      "disk nearly full on db-2": [
+        0.9,
+        0.1,
+        0
+      ],
+      "pod in a crash loop": [
+        0,
+        1,
+        0
+      ],
+      "certificate expired": [
+        0,
+        0,
+        1
+      ],
+      "the disk is full": [
+        1,
+        0.05,
+        0
+      ]
+    },
+    "fails": {
+      "rate limited": {
+        "status": 429,
+        "retry_after_ms": 2000,
+        "message": "slow down"
+      }
+    },
+    "unanswered": [
+      "never answered"
+    ]
+  },
+  "cases": [
+    {
+      "name": "remember labels the vector <provider>/<model> and keeps the text; recall finds it",
+      "context": {
+        "metadata": {}
+      },
+      "steps": [
+        {
+          "remember": {
+            "namespace": "incidents",
+            "id": "inc-1",
+            "text": "disk full on db-1",
+            "content": {
+              "cause": "logs"
+            },
+            "metadata": {
+              "service": "db"
+            }
+          }
+        },
+        {
+          "remember": {
+            "namespace": "incidents",
+            "id": "inc-2",
+            "text": "pod in a crash loop"
+          }
+        },
+        {
+          "get": {
+            "namespace": "incidents",
+            "tenant": "",
+            "id": "inc-1"
+          },
+          "expect": {
+            "namespace": "incidents",
+            "tenant": "",
+            "id": "inc-1",
+            "embedding": {
+              "model": "scripted/embed-1",
+              "vector": [
+                1,
+                0,
+                0
+              ]
+            },
+            "content": {
+              "cause": "logs"
+            },
+            "text": "disk full on db-1",
+            "metadata": {
+              "service": "db"
+            }
+          }
+        },
+        {
+          "recall": {
+            "namespace": "incidents",
+            "text": "the disk is full"
+          },
+          "expect": [
+            {
+              "id": "inc-1",
+              "similarity": 0.998752
+            },
+            {
+              "id": "inc-2",
+              "similarity": 0.049938
+            }
+          ]
+        }
+      ],
+      "calls": [
+        [
+          "disk full on db-1"
+        ],
+        [
+          "pod in a crash loop"
+        ],
+        [
+          "the disk is full"
+        ]
+      ],
+      "events": [
+        "ModelCallStarted embeddings embed-1 scripted",
+        "ModelCallCompleted embeddings Succeeded 4",
+        "ModelCallStarted embeddings embed-1 scripted",
+        "ModelCallCompleted embeddings Succeeded 4",
+        "ModelCallStarted embeddings embed-1 scripted",
+        "ModelCallCompleted embeddings Succeeded 4"
+      ]
+    },
+    {
+      "name": "the tenant comes from the run's metadata",
+      "context": {
+        "metadata": {
+          "tenant": "acme"
+        }
+      },
+      "steps": [
+        {
+          "remember": {
+            "namespace": "incidents",
+            "id": "inc-1",
+            "text": "disk full on db-1"
+          }
+        },
+        {
+          "get": {
+            "namespace": "incidents",
+            "tenant": "acme",
+            "id": "inc-1"
+          },
+          "expect": {
+            "namespace": "incidents",
+            "tenant": "acme",
+            "id": "inc-1",
+            "embedding": {
+              "model": "scripted/embed-1",
+              "vector": [
+                1,
+                0,
+                0
+              ]
+            },
+            "content": null,
+            "text": "disk full on db-1",
+            "metadata": {}
+          }
+        },
+        {
+          "get": {
+            "namespace": "incidents",
+            "tenant": "",
+            "id": "inc-1"
+          },
+          "expect": null
+        },
+        {
+          "recall": {
+            "namespace": "incidents",
+            "text": "the disk is full"
+          },
+          "expect": [
+            {
+              "id": "inc-1",
+              "similarity": 0.998752
+            }
+          ]
+        }
+      ],
+      "calls": [
+        [
+          "disk full on db-1"
+        ],
+        [
+          "the disk is full"
+        ]
+      ]
+    },
+    {
+      "name": "an entry's or a recall's own tenant wins over the run's",
+      "context": {
+        "metadata": {
+          "tenant": "acme"
+        }
+      },
+      "steps": [
+        {
+          "remember": {
+            "namespace": "incidents",
+            "id": "inc-1",
+            "text": "disk full on db-1",
+            "tenant": "globex"
+          }
+        },
+        {
+          "remember": {
+            "namespace": "incidents",
+            "id": "inc-2",
+            "text": "disk nearly full on db-2"
+          }
+        },
+        {
+          "recall": {
+            "namespace": "incidents",
+            "text": "the disk is full"
+          },
+          "expect": [
+            {
+              "id": "inc-2",
+              "similarity": 0.998158
+            }
+          ]
+        },
+        {
+          "recall": {
+            "namespace": "incidents",
+            "text": "the disk is full",
+            "options": {
+              "tenant": "globex"
+            }
+          },
+          "expect": [
+            {
+              "id": "inc-1",
+              "similarity": 0.998752
+            }
+          ]
+        },
+        {
+          "recall": {
+            "namespace": "incidents",
+            "text": "the disk is full",
+            "options": {
+              "tenant": ""
+            }
+          },
+          "expect": []
+        }
+      ]
+    },
+    {
+      "name": "without a node context the tenant is empty",
+      "context": null,
+      "steps": [
+        {
+          "remember": {
+            "namespace": "incidents",
+            "id": "inc-1",
+            "text": "disk full on db-1"
+          }
+        },
+        {
+          "get": {
+            "namespace": "incidents",
+            "tenant": "",
+            "id": "inc-1"
+          },
+          "expect": {
+            "namespace": "incidents",
+            "tenant": "",
+            "id": "inc-1",
+            "embedding": {
+              "model": "scripted/embed-1",
+              "vector": [
+                1,
+                0,
+                0
+              ]
+            },
+            "content": null,
+            "text": "disk full on db-1",
+            "metadata": {}
+          }
+        },
+        {
+          "recall": {
+            "namespace": "incidents",
+            "text": "the disk is full"
+          },
+          "expect": [
+            {
+              "id": "inc-1",
+              "similarity": 0.998752
+            }
+          ]
+        }
+      ],
+      "calls": [
+        [
+          "disk full on db-1"
+        ],
+        [
+          "the disk is full"
+        ]
+      ]
+    },
+    {
+      "name": "the tenant key is configurable",
+      "options": {
+        "tenant_key": "org"
+      },
+      "context": {
+        "metadata": {
+          "tenant": "acme",
+          "org": "initech"
+        }
+      },
+      "steps": [
+        {
+          "remember": {
+            "namespace": "incidents",
+            "id": "inc-1",
+            "text": "disk full on db-1"
+          }
+        },
+        {
+          "get": {
+            "namespace": "incidents",
+            "tenant": "acme",
+            "id": "inc-1"
+          },
+          "expect": null
+        },
+        {
+          "get": {
+            "namespace": "incidents",
+            "tenant": "initech",
+            "id": "inc-1"
+          },
+          "expect": {
+            "namespace": "incidents",
+            "tenant": "initech",
+            "id": "inc-1",
+            "embedding": {
+              "model": "scripted/embed-1",
+              "vector": [
+                1,
+                0,
+                0
+              ]
+            },
+            "content": null,
+            "text": "disk full on db-1",
+            "metadata": {}
+          }
+        }
+      ]
+    },
+    {
+      "name": "a model label replaces <provider>/<model>",
+      "options": {
+        "model": "nomic-768"
+      },
+      "context": {
+        "metadata": {}
+      },
+      "steps": [
+        {
+          "remember": {
+            "namespace": "incidents",
+            "id": "inc-1",
+            "text": "disk full on db-1"
+          }
+        },
+        {
+          "get": {
+            "namespace": "incidents",
+            "tenant": "",
+            "id": "inc-1"
+          },
+          "expect": {
+            "namespace": "incidents",
+            "tenant": "",
+            "id": "inc-1",
+            "embedding": {
+              "model": "nomic-768",
+              "vector": [
+                1,
+                0,
+                0
+              ]
+            },
+            "content": null,
+            "text": "disk full on db-1",
+            "metadata": {}
+          }
+        },
+        {
+          "recall": {
+            "namespace": "incidents",
+            "text": "the disk is full"
+          },
+          "expect": [
+            {
+              "id": "inc-1",
+              "similarity": 0.998752
+            }
+          ]
+        }
+      ],
+      "events": [
+        "ModelCallStarted embeddings embed-1 scripted",
+        "ModelCallCompleted embeddings Succeeded 4",
+        "ModelCallStarted embeddings embed-1 scripted",
+        "ModelCallCompleted embeddings Succeeded 4"
+      ]
+    },
+    {
+      "name": "remember_many embeds every text in one call and stores them together",
+      "context": {
+        "metadata": {}
+      },
+      "steps": [
+        {
+          "remember_many": [
+            {
+              "namespace": "incidents",
+              "id": "inc-1",
+              "text": "disk full on db-1",
+              "metadata": {
+                "service": "db"
+              }
+            },
+            {
+              "namespace": "incidents",
+              "id": "inc-2",
+              "text": "disk nearly full on db-2",
+              "metadata": {
+                "service": "db"
+              }
+            },
+            {
+              "namespace": "incidents",
+              "id": "inc-3",
+              "text": "pod in a crash loop",
+              "metadata": {
+                "service": "k8s"
+              }
+            }
+          ]
+        },
+        {
+          "recall": {
+            "namespace": "incidents",
+            "text": "the disk is full",
+            "options": {
+              "limit": 2
+            }
+          },
+          "expect": [
+            {
+              "id": "inc-1",
+              "similarity": 0.998752
+            },
+            {
+              "id": "inc-2",
+              "similarity": 0.998158
+            }
+          ]
+        },
+        {
+          "recall": {
+            "namespace": "incidents",
+            "text": "the disk is full",
+            "options": {
+              "limit": 2,
+              "exclude": [
+                "inc-1"
+              ]
+            }
+          },
+          "expect": [
+            {
+              "id": "inc-2",
+              "similarity": 0.998158
+            },
+            {
+              "id": "inc-3",
+              "similarity": 0.049938
+            }
+          ]
+        },
+        {
+          "recall": {
+            "namespace": "incidents",
+            "text": "the disk is full",
+            "options": {
+              "min_similarity": 0.5
+            }
+          },
+          "expect": [
+            {
+              "id": "inc-1",
+              "similarity": 0.998752
+            },
+            {
+              "id": "inc-2",
+              "similarity": 0.998158
+            }
+          ]
+        },
+        {
+          "recall": {
+            "namespace": "incidents",
+            "text": "the disk is full",
+            "options": {
+              "metadata": {
+                "service": "k8s"
+              }
+            }
+          },
+          "expect": [
+            {
+              "id": "inc-3",
+              "similarity": 0.049938
+            }
+          ]
+        }
+      ],
+      "calls": [
+        [
+          "disk full on db-1",
+          "disk nearly full on db-2",
+          "pod in a crash loop"
+        ],
+        [
+          "the disk is full"
+        ],
+        [
+          "the disk is full"
+        ],
+        [
+          "the disk is full"
+        ],
+        [
+          "the disk is full"
+        ]
+      ],
+      "events": [
+        "ModelCallStarted embeddings embed-1 scripted",
+        "ModelCallCompleted embeddings Succeeded 12",
+        "ModelCallStarted embeddings embed-1 scripted",
+        "ModelCallCompleted embeddings Succeeded 4",
+        "ModelCallStarted embeddings embed-1 scripted",
+        "ModelCallCompleted embeddings Succeeded 4",
+        "ModelCallStarted embeddings embed-1 scripted",
+        "ModelCallCompleted embeddings Succeeded 4",
+        "ModelCallStarted embeddings embed-1 scripted",
+        "ModelCallCompleted embeddings Succeeded 4"
+      ]
+    },
+    {
+      "name": "remember_many with nothing to remember makes no call",
+      "context": {
+        "metadata": {}
+      },
+      "steps": [
+        {
+          "remember_many": []
+        }
+      ],
+      "calls": [],
+      "events": []
+    },
+    {
+      "name": "a failed embedding is the node's failure, and nothing is stored",
+      "context": {
+        "metadata": {}
+      },
+      "steps": [
+        {
+          "remember": {
+            "namespace": "incidents",
+            "id": "inc-1",
+            "text": "rate limited"
+          },
+          "failure": {
+            "transient": true,
+            "retry_after_ms": 2000,
+            "message": "model call failed (429): slow down"
+          }
+        },
+        {
+          "get": {
+            "namespace": "incidents",
+            "tenant": "",
+            "id": "inc-1"
+          },
+          "expect": null
+        },
+        {
+          "recall": {
+            "namespace": "incidents",
+            "text": "rate limited"
+          },
+          "failure": {
+            "transient": true,
+            "retry_after_ms": 2000,
+            "message": "model call failed (429): slow down"
+          }
+        }
+      ],
+      "calls": [
+        [
+          "rate limited"
+        ],
+        [
+          "rate limited"
+        ]
+      ],
+      "events": [
+        "ModelCallStarted embeddings embed-1 scripted",
+        "ModelCallCompleted embeddings Failed -",
+        "ModelCallStarted embeddings embed-1 scripted",
+        "ModelCallCompleted embeddings Failed -"
+      ]
+    },
+    {
+      "name": "an answer short of vectors is a fatal failure, and nothing is stored",
+      "context": {
+        "metadata": {}
+      },
+      "steps": [
+        {
+          "remember_many": [
+            {
+              "namespace": "incidents",
+              "id": "inc-1",
+              "text": "disk full on db-1"
+            },
+            {
+              "namespace": "incidents",
+              "id": "inc-2",
+              "text": "never answered"
+            }
+          ],
+          "failure": {
+            "transient": false,
+            "message": "model call failed (invalid_response): expected 2 vectors, the embedder returned 1"
+          }
+        },
+        {
+          "get": {
+            "namespace": "incidents",
+            "tenant": "",
+            "id": "inc-1"
+          },
+          "expect": null
+        }
+      ],
+      "calls": [
+        [
+          "disk full on db-1",
+          "never answered"
+        ]
+      ],
+      "events": [
+        "ModelCallStarted embeddings embed-1 scripted",
+        "ModelCallCompleted embeddings Failed -"
+      ]
+    },
+    {
+      "name": "bad input is refused before any embedding call",
+      "context": {
+        "metadata": {}
+      },
+      "steps": [
+        {
+          "remember": {
+            "namespace": "incidents",
+            "id": "",
+            "text": "disk full on db-1"
+          },
+          "error": "the id is empty"
+        },
+        {
+          "remember": {
+            "namespace": "",
+            "id": "inc-1",
+            "text": "disk full on db-1"
+          },
+          "error": "the namespace is empty"
+        },
+        {
+          "remember": {
+            "namespace": "incidents",
+            "id": "inc-1",
+            "text": "disk full on db-1",
+            "metadata": {
+              "": "x"
+            }
+          },
+          "error": "a metadata key is empty"
+        },
+        {
+          "remember_many": [
+            {
+              "namespace": "incidents",
+              "id": "inc-1",
+              "text": "disk full on db-1"
+            },
+            {
+              "namespace": "incidents",
+              "id": "",
+              "text": "pod in a crash loop"
+            }
+          ],
+          "error": "the id is empty"
+        },
+        {
+          "recall": {
+            "namespace": "",
+            "text": "the disk is full"
+          },
+          "error": "the namespace is empty"
+        },
+        {
+          "recall": {
+            "namespace": "incidents",
+            "text": "the disk is full",
+            "options": {
+              "limit": 0
+            }
+          },
+          "error": "the limit is 0; it must be from 1 to 1000"
+        },
+        {
+          "recall": {
+            "namespace": "incidents",
+            "text": "the disk is full",
+            "options": {
+              "min_similarity": 1.5
+            }
+          },
+          "error": "the minimum similarity is 1.5; it must be from -1 to 1"
+        },
+        {
+          "get": {
+            "namespace": "incidents",
+            "tenant": "",
+            "id": "inc-1"
+          },
+          "expect": null
+        }
+      ],
+      "calls": [],
+      "events": []
+    }
+  ]
+}

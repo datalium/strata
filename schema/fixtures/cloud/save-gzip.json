@@ -1,0 +1,39 @@
+{
+  "description": "A body larger than the gzip threshold (64 bytes here) is sent gzipped; the body compared is the decompressed one.",
+  "operation": "save",
+  "options": {
+    "gzip_threshold_bytes": 64
+  },
+  "checkpoint": "../checkpoint-lifecycle/frozen.json",
+  "exchanges": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/sdk/checkpoints",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer {api_key}",
+          "accept": "application/json",
+          "content-type": "application/json",
+          "content-encoding": "gzip"
+        },
+        "absent_headers": [
+          "strata-if-sequence"
+        ],
+        "body": "checkpoint"
+      },
+      "response": {
+        "status": 201,
+        "headers": {},
+        "body": {
+          "thread_id": "thread_hitl_demo",
+          "sequence": 0,
+          "received_at": "2026-10-09T12:00:00Z"
+        }
+      }
+    }
+  ],
+  "expect": {
+    "saved": true
+  }
+}

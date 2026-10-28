@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0.0",
+  "entry_point": "A",
+  "nodes": [
+    { "name": "A", "metadata": null },
+    { "name": "B", "metadata": null }
+  ],
+  "edges": [
+    { "from": "A", "to": "B", "guarded": false, "condition": null },
+    { "from": "Ghost", "to": "B", "guarded": false, "condition": null }
+  ]
+}

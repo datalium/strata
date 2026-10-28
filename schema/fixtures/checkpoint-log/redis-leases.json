@@ -1,0 +1,17 @@
+{
+  "description": "The Redis keys of one thread's lease (design/32-Thread-Leases.md), relative to the prefix, after each step in order: worker-1 acquires thread t1, releases it, and worker-2 acquires it. leases:t1 is a hash that exists only while the thread is held and expires with the lease (its PTTL is positive); lease-tokens:t1 is the thread's latest token, a counter with no expiry. Hash values and the counter are strings, as Redis returns them. A store reading keys another runtime wrote in the last shape must report the thread held by worker-2 with token 2.",
+  "steps": [
+    {
+      "after": "acquired",
+      "keys": { "leases:t1": { "owner": "worker-1", "token": "1" }, "lease-tokens:t1": "1" }
+    },
+    {
+      "after": "released",
+      "keys": { "leases:t1": null, "lease-tokens:t1": "1" }
+    },
+    {
+      "after": "reacquired",
+      "keys": { "leases:t1": { "owner": "worker-2", "token": "2" }, "lease-tokens:t1": "2" }
+    }
+  ]
+}

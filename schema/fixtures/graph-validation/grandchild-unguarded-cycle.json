@@ -1,0 +1,42 @@
+{
+  "schema_version": "1.1.0",
+  "entry_point": "Triage",
+  "nodes": [
+    { "name": "Triage", "metadata": null },
+    {
+      "name": "Remediate",
+      "metadata": null,
+      "kind": "subgraph",
+      "graph": {
+        "schema_version": "1.1.0",
+        "entry_point": "Plan",
+        "nodes": [
+          { "name": "Plan", "metadata": null },
+          {
+            "name": "Fix",
+            "metadata": null,
+            "kind": "subgraph",
+            "graph": {
+              "schema_version": "1.0.0",
+              "entry_point": "Apply",
+              "nodes": [
+                { "name": "Apply", "metadata": null },
+                { "name": "Verify", "metadata": null }
+              ],
+              "edges": [
+                { "from": "Apply", "to": "Verify", "guarded": false, "condition": null },
+                { "from": "Verify", "to": "Apply", "guarded": false, "condition": null }
+              ]
+            }
+          }
+        ],
+        "edges": [
+          { "from": "Plan", "to": "Fix", "guarded": false, "condition": null }
+        ]
+      }
+    }
+  ],
+  "edges": [
+    { "from": "Triage", "to": "Remediate", "guarded": false, "condition": null }
+  ]
+}

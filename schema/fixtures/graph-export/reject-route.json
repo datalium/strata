@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.6.0",
+  "entry_point": "Plan",
+  "nodes": [
+    { "name": "Plan", "metadata": null },
+    { "name": "Approve", "metadata": null, "interrupt": { "timeout_ms": null } },
+    { "name": "Apply", "metadata": null },
+    { "name": "Abort", "metadata": null }
+  ],
+  "edges": [
+    { "from": "Plan", "to": "Approve", "guarded": false, "condition": null },
+    { "from": "Approve", "to": "Apply", "guarded": false, "condition": null },
+    { "from": "Approve", "to": "Abort", "guarded": true, "condition": "on_reject" }
+  ]
+}

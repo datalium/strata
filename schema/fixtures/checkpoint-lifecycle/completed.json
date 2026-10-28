@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0.0",
+  "thread_id": "thread_completed_demo",
+  "status": "completed",
+  "suspended_node": "C",
+  "next_node": null,
+  "frozen_state": {
+    "trail": "ABC",
+    "approved": false,
+    "limit": 0
+  },
+  "metadata": {
+    "strata.hops": "3"
+  },
+  "created_at": "2026-10-10T00:00:00Z",
+  "resumed_at": null
+}

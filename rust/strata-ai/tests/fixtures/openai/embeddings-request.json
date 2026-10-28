@@ -1,0 +1,9 @@
+{
+  "model": "text-embedding-3-small",
+  "input": [
+    "disk full on db-1",
+    "pod in a crash loop"
+  ],
+  "encoding_format": "float",
+  "dimensions": 3
+}

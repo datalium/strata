@@ -1,0 +1,37 @@
+{
+  "description": "A conditional save (a resume's stamp) at the expected sequence: Strata-If-Sequence is sent.",
+  "operation": "save",
+  "checkpoint": "../checkpoint-lifecycle/waiting-approval.json",
+  "expected_sequence": 3,
+  "exchanges": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/sdk/checkpoints",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer {api_key}",
+          "accept": "application/json",
+          "content-type": "application/json",
+          "strata-if-sequence": "3"
+        },
+        "absent_headers": [
+          "content-encoding"
+        ],
+        "body": "checkpoint"
+      },
+      "response": {
+        "status": 201,
+        "headers": {},
+        "body": {
+          "thread_id": "thread_approval_demo",
+          "sequence": 4,
+          "received_at": "2026-10-09T12:00:00Z"
+        }
+      }
+    }
+  ],
+  "expect": {
+    "saved": true
+  }
+}

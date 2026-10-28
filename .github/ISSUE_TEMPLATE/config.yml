@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+    - name: Question or idea
+      url: https://github.com/datalium/strata/discussions
+      about: Ask a question or share an idea in GitHub Discussions.
+    - name: Security issue
+      url: https://github.com/datalium/strata/security/advisories/new
+      about: Report a vulnerability privately. Please don't open a public issue.
+    - name: Documentation
+      url: https://stratamesh.dev
+      about: Guides, concepts and reference for Datalium Strata.

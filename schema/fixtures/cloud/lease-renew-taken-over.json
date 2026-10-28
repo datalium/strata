@@ -1,0 +1,42 @@
+{
+  "description": "A renewal after another owner acquired the thread: 200 with a null lease, which is None / null, not an error.",
+  "operation": "renew",
+  "lease": {
+    "thread_id": "thread_running_demo",
+    "owner": "worker-1",
+    "token": 3,
+    "expires_at": "2026-10-20T12:00:30.123Z"
+  },
+  "ttl_ms": 30000,
+  "exchanges": [
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/v1/sdk/leases",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer {api_key}",
+          "accept": "application/json",
+          "content-type": "application/json"
+        },
+        "absent_headers": [],
+        "body": {
+          "thread_id": "thread_running_demo",
+          "owner": "worker-1",
+          "token": 3,
+          "ttl_ms": 30000
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "lease": null
+        }
+      }
+    }
+  ],
+  "expect": {
+    "lease": null
+  }
+}

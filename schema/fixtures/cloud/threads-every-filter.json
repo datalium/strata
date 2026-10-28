@@ -1,0 +1,64 @@
+{
+  "description": "Every ThreadQuery filter on the query string: state repeated, timestamps at whole seconds, a meta. pair per metadata key, the graph, the limit and Cloud's cursor passed back as it came.",
+  "operation": "list",
+  "query": {
+    "states": [
+      "failed",
+      "cancelled"
+    ],
+    "updated_after": "2026-10-01T00:00:00Z",
+    "updated_before": "2026-10-02T00:00:00.750Z",
+    "metadata": {
+      "tenant": "acme",
+      "strata.end_reason": "requested"
+    },
+    "graph_id": "wire-transfer",
+    "graph_version": "2",
+    "limit": 50,
+    "cursor": "Y2xvdWQtY3Vyc29yOjQy"
+  },
+  "exchanges": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1/sdk/threads",
+        "query": {
+          "state": [
+            "failed",
+            "cancelled"
+          ],
+          "updated_after": "2026-10-01T00:00:00Z",
+          "updated_before": "2026-10-02T00:00:00Z",
+          "meta.tenant": "acme",
+          "meta.strata.end_reason": "requested",
+          "graph_id": "wire-transfer",
+          "graph_version": "2",
+          "limit": "50",
+          "cursor": "Y2xvdWQtY3Vyc29yOjQy"
+        },
+        "headers": {
+          "authorization": "Bearer {api_key}",
+          "accept": "application/json"
+        },
+        "absent_headers": [
+          "content-type"
+        ],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "threads": [],
+          "next_cursor": null
+        }
+      }
+    }
+  ],
+  "expect": {
+    "page": {
+      "threads": [],
+      "next_cursor": null
+    }
+  }
+}

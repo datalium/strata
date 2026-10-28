@@ -1,0 +1,67 @@
+{
+  "description": "A lost race for a sequence on Cloud's side: retried with the same body.",
+  "operation": "save",
+  "checkpoint": "../checkpoint-lifecycle/frozen.json",
+  "exchanges": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/sdk/checkpoints",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer {api_key}",
+          "accept": "application/json",
+          "content-type": "application/json"
+        },
+        "absent_headers": [
+          "strata-if-sequence",
+          "content-encoding"
+        ],
+        "body": "checkpoint"
+      },
+      "response": {
+        "status": 409,
+        "headers": {},
+        "body": {
+          "status": "FAILED",
+          "code": "STRATA_CLOUD_API_SEQUENCE_CONFLICT",
+          "error": "Sequence conflict",
+          "timestamp": "2026-10-09T12:00:00.000Z",
+          "statusCode": 409
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/sdk/checkpoints",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer {api_key}",
+          "accept": "application/json",
+          "content-type": "application/json"
+        },
+        "absent_headers": [
+          "strata-if-sequence",
+          "content-encoding"
+        ],
+        "body": "checkpoint"
+      },
+      "response": {
+        "status": 201,
+        "headers": {},
+        "body": {
+          "thread_id": "thread_hitl_demo",
+          "sequence": 1,
+          "received_at": "2026-10-09T12:00:00Z"
+        }
+      }
+    }
+  ],
+  "expect": {
+    "saved": true,
+    "min_waits_ms": [
+      0
+    ]
+  }
+}

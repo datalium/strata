@@ -1,0 +1,40 @@
+{
+  "schema_version": "1.5.0",
+  "identity": { "id": "incident", "version": "1" },
+  "entry_point": "Plan",
+  "nodes": [
+    { "name": "Plan", "metadata": null },
+    {
+      "name": "Remediate",
+      "metadata": null,
+      "kind": "subgraph",
+      "graph": {
+        "schema_version": "1.5.0",
+        "identity": { "id": "remediation", "version": null },
+        "entry_point": "Apply",
+        "nodes": [
+          { "name": "Apply", "metadata": null },
+          {
+            "name": "Check",
+            "metadata": null,
+            "kind": "subgraph",
+            "graph": {
+              "schema_version": "1.0.0",
+              "entry_point": "Probe",
+              "nodes": [{ "name": "Probe", "metadata": null }],
+              "edges": []
+            }
+          }
+        ],
+        "edges": [
+          { "from": "Apply", "to": "Check", "guarded": false, "condition": null }
+        ]
+      }
+    },
+    { "name": "Report", "metadata": null }
+  ],
+  "edges": [
+    { "from": "Plan", "to": "Remediate", "guarded": false, "condition": null },
+    { "from": "Remediate", "to": "Report", "guarded": false, "condition": null }
+  ]
+}

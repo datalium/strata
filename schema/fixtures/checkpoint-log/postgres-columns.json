@@ -1,0 +1,18 @@
+[
+  { "name": "thread_id", "type": "text", "notnull": true, "pk": 1 },
+  { "name": "sequence", "type": "bigint", "notnull": true, "pk": 2 },
+  { "name": "schema_version", "type": "text", "notnull": true, "pk": 0 },
+  { "name": "status", "type": "text", "notnull": true, "pk": 0 },
+  { "name": "suspended_node", "type": "text", "notnull": false, "pk": 0 },
+  { "name": "next_node", "type": "text", "notnull": false, "pk": 0 },
+  { "name": "frozen_state", "type": "jsonb", "notnull": true, "pk": 0 },
+  { "name": "metadata", "type": "jsonb", "notnull": false, "pk": 0 },
+  { "name": "created_at", "type": "text", "notnull": true, "pk": 0 },
+  { "name": "resumed_at", "type": "text", "notnull": false, "pk": 0 },
+  { "name": "nested", "type": "jsonb", "notnull": false, "pk": 0 },
+  { "name": "decision", "type": "jsonb", "notnull": false, "pk": 0 },
+  { "name": "wait", "type": "jsonb", "notnull": false, "pk": 0 },
+  { "name": "wake_at", "type": "text", "notnull": false, "pk": 0 },
+  { "name": "graph_id", "type": "text", "notnull": false, "pk": 0 },
+  { "name": "graph_version", "type": "text", "notnull": false, "pk": 0 }
+]

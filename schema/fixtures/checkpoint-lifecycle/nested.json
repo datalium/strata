@@ -1,0 +1,30 @@
+{
+  "schema_version": "1.1.0",
+  "thread_id": "thread_nested_demo",
+  "status": "interrupted",
+  "suspended_node": "Work",
+  "next_node": "Work",
+  "frozen_state": {
+    "amount": 5,
+    "log": ["prepared"],
+    "approved_by": null
+  },
+  "metadata": null,
+  "created_at": "2026-09-21T00:00:00Z",
+  "resumed_at": null,
+  "nested": {
+    "schema_version": "1.0.0",
+    "thread_id": "Work",
+    "status": "interrupted",
+    "suspended_node": "Approve",
+    "next_node": "Send",
+    "frozen_state": {
+      "n": 10,
+      "trail": ["draft", "approve"],
+      "approved_by": null
+    },
+    "metadata": null,
+    "created_at": "2026-09-21T00:00:00Z",
+    "resumed_at": null
+  }
+}

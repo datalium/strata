@@ -1,0 +1,29 @@
+{
+  "thread_id": "thread_deploy_demo",
+  "sequence": 0,
+  "schema_version": "1.5.0",
+  "status": "interrupted",
+  "suspended_node": "Deploying",
+  "next_node": "Verify",
+  "frozen_state": {
+    "release": "v2.4.1",
+    "started": true,
+    "finished": false,
+    "outcome": null,
+    "rolled_back": false,
+    "verified": false
+  },
+  "metadata": null,
+  "created_at": "2026-10-06T12:00:00Z",
+  "resumed_at": null,
+  "nested": null,
+  "decision": null,
+  "wait": {
+    "kind": "event",
+    "event_type": "deployment.finished",
+    "wake_at": "2026-10-06T13:00:00Z"
+  },
+  "wake_at": "2026-10-06T13:00:00Z",
+  "graph_id": null,
+  "graph_version": null
+}

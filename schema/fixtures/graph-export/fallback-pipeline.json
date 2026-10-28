@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0.0",
+  "entry_point": "Intake",
+  "nodes": [
+    { "name": "Intake", "metadata": null },
+    { "name": "Charge", "metadata": null },
+    { "name": "Ship", "metadata": null },
+    { "name": "ManualReview", "metadata": null }
+  ],
+  "edges": [
+    { "from": "Intake", "to": "Charge", "guarded": false, "condition": null },
+    { "from": "Charge", "to": "Ship", "guarded": false, "condition": null },
+    { "from": "Ship", "to": "Intake", "guarded": true, "condition": null },
+    { "from": "Charge", "to": "ManualReview", "guarded": true, "condition": "on_failure" }
+  ]
+}

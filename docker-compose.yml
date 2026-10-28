@@ -1,0 +1,42 @@
+# Throwaway Postgres + Redis for the storage-adapter tests. Not a deployment
+# recipe: the credentials are public and nothing is persisted between runs.
+#
+#   docker compose up -d --wait
+#   export STRATA_TEST_POSTGRES_URL=postgres://strata:strata@localhost:5432/strata
+#   export STRATA_TEST_REDIS_URL=redis://localhost:6379
+#   (cd rust && cargo test --all-features) && dotnet test dotnet/Datalium.Strata.sln
+#   docker compose down
+#
+# Without those variables the backend tests skip (see schema/README.md,
+# "Postgres checkpoint log"); CI sets them and STRATA_REQUIRE_BACKENDS=1.
+#
+# The images match CI. The memory stores need pgvector in Postgres and the
+# Redis Query Engine, which comes with Redis 8.
+services:
+    postgres:
+        image: pgvector/pgvector:pg16
+        environment:
+            POSTGRES_USER: strata
+            POSTGRES_PASSWORD: strata
+            POSTGRES_DB: strata
+        ports:
+            - '5432:5432'
+        tmpfs:
+            - /var/lib/postgresql/data
+        healthcheck:
+            test: ['CMD-SHELL', 'pg_isready -U strata -d strata']
+            interval: 2s
+            timeout: 3s
+            retries: 30
+
+    redis:
+        image: redis:8
+        # No persistence: a fresh, empty Redis every `up`.
+        command: ['redis-server', '--save', '', '--appendonly', 'no']
+        ports:
+            - '6379:6379'
+        healthcheck:
+            test: ['CMD', 'redis-cli', 'ping']
+            interval: 2s
+            timeout: 3s
+            retries: 30

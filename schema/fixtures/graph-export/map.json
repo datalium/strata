@@ -1,0 +1,70 @@
+{
+  "schema_version": "1.3.0",
+  "entry_point": "Generate",
+  "nodes": [
+    { "name": "Generate", "metadata": null },
+    {
+      "name": "Investigate",
+      "metadata": { "items": "hypotheses", "key": "hypothesis id" },
+      "kind": "map",
+      "graph": {
+        "schema_version": "1.1.0",
+        "entry_point": "Assess",
+        "nodes": [
+          { "name": "Assess", "metadata": null },
+          {
+            "name": "Probe",
+            "metadata": null,
+            "kind": "parallel_group",
+            "branches": [
+              { "name": "logs", "metadata": null },
+              { "name": "metrics", "metadata": null }
+            ]
+          },
+          {
+            "name": "Deep",
+            "metadata": null,
+            "kind": "subgraph",
+            "graph": {
+              "schema_version": "1.0.0",
+              "entry_point": "Dig",
+              "nodes": [{ "name": "Dig", "metadata": null }],
+              "edges": []
+            }
+          }
+        ],
+        "edges": [
+          { "from": "Assess", "to": "Probe", "guarded": false, "condition": null },
+          { "from": "Probe", "to": "Deep", "guarded": false, "condition": null }
+        ]
+      }
+    },
+    {
+      "name": "Confirm",
+      "metadata": null,
+      "kind": "map",
+      "graph": {
+        "schema_version": "1.0.0",
+        "entry_point": "Check",
+        "nodes": [{ "name": "Check", "metadata": null }],
+        "edges": []
+      },
+      "join": { "policy": "first_matching", "count": null, "condition": "confidence >= 0.9", "partial": "keep_succeeded" }
+    },
+    {
+      "name": "Notify",
+      "metadata": null,
+      "kind": "parallel_group",
+      "branches": [
+        { "name": "email", "metadata": null },
+        { "name": "chat", "metadata": null }
+      ],
+      "join": { "policy": "first_success", "count": null, "condition": null, "partial": "fail_group" }
+    }
+  ],
+  "edges": [
+    { "from": "Generate", "to": "Investigate", "guarded": false, "condition": null },
+    { "from": "Investigate", "to": "Confirm", "guarded": false, "condition": null },
+    { "from": "Confirm", "to": "Notify", "guarded": false, "condition": null }
+  ]
+}

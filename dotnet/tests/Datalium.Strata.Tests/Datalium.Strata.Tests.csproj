@@ -1,0 +1,56 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.4" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.11.0" />
+    <!-- The hosting tests build a real host and send its telemetry to an in-memory exporter. -->
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.12" />
+    <!-- The live model tests (design/44) call an OpenAI-compatible endpoint through Microsoft.Extensions.AI. -->
+    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.10.1" />
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.10.0" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="OpenTelemetry.Exporter.InMemory" Version="1.19.1" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.19.1" />
+    <!-- sqlite-vec's native library for the SQLite memory store's tests (design/45-Long-Term-Memory.md): the store
+         loads it by name ("vec0") and the storage package doesn't reference it, so an application supplies it.
+         Without contentFiles: the package injects a public Microsoft.Data.Sqlite.SqliteVectorExtensions class. -->
+    <PackageReference Include="sqlite-vec" Version="0.1.7-alpha.2.1" ExcludeAssets="contentFiles" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The benchmark scenarios, compiled in from the benchmark project (design/37-Benchmarks.md), so the
+         tests that check them need neither that project nor BenchmarkDotNet. -->
+    <Compile Include="..\..\benchmarks\Datalium.Strata.Benchmarks\Scenarios.cs" Link="Benchmarks\Scenarios.cs" />
+    <Compile Include="..\..\benchmarks\Datalium.Strata.Benchmarks\Stats.cs" Link="Benchmarks\Stats.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Datalium.Strata\Datalium.Strata.csproj" />
+    <ProjectReference Include="..\..\src\Datalium.Strata.Storage\Datalium.Strata.Storage.csproj" />
+    <ProjectReference Include="..\..\src\Datalium.Strata.Cloud\Datalium.Strata.Cloud.csproj" />
+    <ProjectReference Include="..\..\src\Datalium.Strata.Hosting\Datalium.Strata.Hosting.csproj" />
+    <ProjectReference Include="..\..\src\Datalium.Strata.AI\Datalium.Strata.AI.csproj" />
+    <!-- Normal reference (not OutputItemType="Analyzer") so tests can drive the generator
+         directly via CSharpGeneratorDriver for isolated diagnostic assertions. -->
+    <ProjectReference Include="..\..\src\Datalium.Strata.SourceGenerators\Datalium.Strata.SourceGenerators.csproj" />
+    <!-- Also wired as an analyzer so SampleTools.cs's own [StrataTool] methods below
+         get real generated dispatch code as part of this project's normal build. -->
+    <ProjectReference Include="..\..\src\Datalium.Strata.SourceGenerators\Datalium.Strata.SourceGenerators.csproj"
+                       OutputItemType="Analyzer"
+                       ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+</Project>

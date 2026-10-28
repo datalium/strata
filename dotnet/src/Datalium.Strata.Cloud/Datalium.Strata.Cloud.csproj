@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <Import Project="..\Package.props" />
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Description>The Strata Cloud checkpoint store, decisions client and decision worker for Datalium Strata.</Description>
+  </PropertyGroup>
+
+  <!-- design/30-Strata-Cloud-Store.md: HTTP and TLS live here, so they reach only the hosts that use
+       Strata Cloud. The BCL's HttpClient and System.Text.Json, and the engine: nothing else. -->
+  <ItemGroup>
+    <!-- PrivateAssets without "analyzers": NuGet hides a dependency's analyzers from a package's own consumers
+         by default, and the engine's source generator has to reach them
+         (design/36-Packaging-And-Versioning.md). -->
+    <ProjectReference Include="..\Datalium.Strata\Datalium.Strata.csproj" PrivateAssets="contentfiles;build" />
+  </ItemGroup>
+
+</Project>

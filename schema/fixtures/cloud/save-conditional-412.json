@@ -1,0 +1,39 @@
+{
+  "description": "Something was appended since the expected sequence: false, nothing stored, not retried.",
+  "operation": "save",
+  "checkpoint": "../checkpoint-lifecycle/waiting-approval.json",
+  "expected_sequence": 3,
+  "exchanges": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/sdk/checkpoints",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer {api_key}",
+          "accept": "application/json",
+          "content-type": "application/json",
+          "strata-if-sequence": "3"
+        },
+        "absent_headers": [
+          "content-encoding"
+        ],
+        "body": "checkpoint"
+      },
+      "response": {
+        "status": 412,
+        "headers": {},
+        "body": {
+          "status": "FAILED",
+          "code": "STRATA_CLOUD_API_PRECONDITION_FAILED",
+          "error": "The thread's latest sequence is not 3",
+          "timestamp": "2026-10-09T12:00:00.000Z",
+          "statusCode": 412
+        }
+      }
+    }
+  ],
+  "expect": {
+    "saved": false
+  }
+}

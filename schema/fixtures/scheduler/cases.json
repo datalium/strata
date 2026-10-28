@@ -1,0 +1,166 @@
+{
+  "description": "The run scheduler's shared cases (design/40-Run-Scheduler.md). Each case makes a scheduler with `options` (absent keys take their defaults: max_queued 1024, no queue time, no reservations, no tenant limits) and plays `steps` in order. `arrive` asks for a slot for the run named by the id, with `priority` (default 0) and `tenant` (default none); `release` gives an admitted run's slot back; `cancel` cancels a run's token (a waiting run leaves the queue, an admitted one keeps its slot); `set_tenant_limit` changes one tenant's limit (null returns it to tenant_limit); `close` closes the scheduler. After each step, `active` is every run holding a slot and `queued` every run waiting, both sorted by id, and `refused` the runs refused by that step, with their reason. Not a wire format: it pins the admission rules across the two engines.",
+  "cases": [
+    {
+      "name": "admits up to max_concurrent, then queues in order of arrival",
+      "options": { "max_concurrent": 2 },
+      "steps": [
+        { "arrive": "a", "active": ["a"], "queued": [], "refused": {} },
+        { "arrive": "b", "active": ["a", "b"], "queued": [], "refused": {} },
+        { "arrive": "c", "active": ["a", "b"], "queued": ["c"], "refused": {} },
+        { "arrive": "d", "active": ["a", "b"], "queued": ["c", "d"], "refused": {} },
+        { "release": "a", "active": ["b", "c"], "queued": ["d"], "refused": {} },
+        { "release": "b", "active": ["c", "d"], "queued": [], "refused": {} }
+      ]
+    },
+    {
+      "name": "higher priority first, first come first served within a priority",
+      "options": { "max_concurrent": 1 },
+      "steps": [
+        { "arrive": "a", "active": ["a"], "queued": [], "refused": {} },
+        { "arrive": "b", "priority": 0, "active": ["a"], "queued": ["b"], "refused": {} },
+        { "arrive": "c", "priority": 1, "active": ["a"], "queued": ["b", "c"], "refused": {} },
+        { "arrive": "d", "priority": 1, "active": ["a"], "queued": ["b", "c", "d"], "refused": {} },
+        { "arrive": "e", "priority": 0, "active": ["a"], "queued": ["b", "c", "d", "e"], "refused": {} },
+        { "release": "a", "active": ["c"], "queued": ["b", "d", "e"], "refused": {} },
+        { "release": "c", "active": ["d"], "queued": ["b", "e"], "refused": {} },
+        { "release": "d", "active": ["b"], "queued": ["e"], "refused": {} },
+        { "release": "b", "active": ["e"], "queued": [], "refused": {} }
+      ]
+    },
+    {
+      "name": "negative priorities rank below the default",
+      "options": { "max_concurrent": 1 },
+      "steps": [
+        { "arrive": "a", "active": ["a"], "queued": [], "refused": {} },
+        { "arrive": "low", "priority": -5, "active": ["a"], "queued": ["low"], "refused": {} },
+        { "arrive": "normal", "active": ["a"], "queued": ["low", "normal"], "refused": {} },
+        { "release": "a", "active": ["normal"], "queued": ["low"], "refused": {} }
+      ]
+    },
+    {
+      "name": "a reservation keeps its slots from lower priorities",
+      "options": { "max_concurrent": 3, "reservations": [ { "min_priority": 2, "slots": 1 } ] },
+      "steps": [
+        { "arrive": "a", "active": ["a"], "queued": [], "refused": {} },
+        { "arrive": "b", "active": ["a", "b"], "queued": [], "refused": {} },
+        { "arrive": "c", "active": ["a", "b"], "queued": ["c"], "refused": {} },
+        { "arrive": "d", "priority": 2, "active": ["a", "b", "d"], "queued": ["c"], "refused": {} },
+        { "arrive": "e", "priority": 5, "active": ["a", "b", "d"], "queued": ["c", "e"], "refused": {} },
+        { "release": "a", "active": ["b", "d", "e"], "queued": ["c"], "refused": {} },
+        { "release": "b", "active": ["d", "e"], "queued": ["c"], "refused": {} },
+        { "release": "d", "active": ["c", "e"], "queued": [], "refused": {} }
+      ]
+    },
+    {
+      "name": "reservations nest: each priority may use what the reservations above it leave",
+      "options": { "max_concurrent": 4, "reservations": [ { "min_priority": 3, "slots": 1 }, { "min_priority": 2, "slots": 1 } ] },
+      "steps": [
+        { "arrive": "a", "active": ["a"], "queued": [], "refused": {} },
+        { "arrive": "b", "active": ["a", "b"], "queued": [], "refused": {} },
+        { "arrive": "c", "active": ["a", "b"], "queued": ["c"], "refused": {} },
+        { "arrive": "d", "priority": 2, "active": ["a", "b", "d"], "queued": ["c"], "refused": {} },
+        { "arrive": "e", "priority": 2, "active": ["a", "b", "d"], "queued": ["c", "e"], "refused": {} },
+        { "arrive": "f", "priority": 3, "active": ["a", "b", "d", "f"], "queued": ["c", "e"], "refused": {} },
+        { "release": "a", "active": ["b", "d", "f"], "queued": ["c", "e"], "refused": {} },
+        { "release": "b", "active": ["d", "e", "f"], "queued": ["c"], "refused": {} },
+        { "release": "f", "active": ["d", "e"], "queued": ["c"], "refused": {} },
+        { "release": "d", "active": ["c", "e"], "queued": [], "refused": {} }
+      ]
+    },
+    {
+      "name": "a tenant at its limit holds back only its own runs",
+      "options": { "max_concurrent": 3, "tenant_limit": 1 },
+      "steps": [
+        { "arrive": "a", "tenant": "acme", "active": ["a"], "queued": [], "refused": {} },
+        { "arrive": "b", "tenant": "acme", "active": ["a"], "queued": ["b"], "refused": {} },
+        { "arrive": "c", "tenant": "globex", "active": ["a", "c"], "queued": ["b"], "refused": {} },
+        { "arrive": "d", "active": ["a", "c", "d"], "queued": ["b"], "refused": {} },
+        { "arrive": "e", "tenant": "globex", "active": ["a", "c", "d"], "queued": ["b", "e"], "refused": {} },
+        { "release": "c", "active": ["a", "d", "e"], "queued": ["b"], "refused": {} },
+        { "release": "d", "active": ["a", "e"], "queued": ["b"], "refused": {} },
+        { "release": "a", "active": ["b", "e"], "queued": [], "refused": {} }
+      ]
+    },
+    {
+      "name": "tenant limits change while running: 0 pauses, running runs go on",
+      "options": { "max_concurrent": 4, "tenant_limits": { "acme": 0 } },
+      "steps": [
+        { "arrive": "a", "tenant": "acme", "active": [], "queued": ["a"], "refused": {} },
+        { "arrive": "b", "tenant": "beta", "active": ["b"], "queued": ["a"], "refused": {} },
+        { "set_tenant_limit": "acme", "limit": 1, "active": ["a", "b"], "queued": [], "refused": {} },
+        { "set_tenant_limit": "beta", "limit": 0, "active": ["a", "b"], "queued": [], "refused": {} },
+        { "arrive": "c", "tenant": "beta", "active": ["a", "b"], "queued": ["c"], "refused": {} },
+        { "release": "b", "active": ["a"], "queued": ["c"], "refused": {} },
+        { "set_tenant_limit": "beta", "limit": null, "active": ["a", "c"], "queued": [], "refused": {} }
+      ]
+    },
+    {
+      "name": "a full queue refuses a newcomer that outranks nobody",
+      "options": { "max_concurrent": 1, "max_queued": 1 },
+      "steps": [
+        { "arrive": "a", "active": ["a"], "queued": [], "refused": {} },
+        { "arrive": "b", "active": ["a"], "queued": ["b"], "refused": {} },
+        { "arrive": "c", "active": ["a"], "queued": ["b"], "refused": { "c": "queue_full" } }
+      ]
+    },
+    {
+      "name": "a full queue sheds its lowest-ranked run for a newcomer that outranks it",
+      "options": { "max_concurrent": 1, "max_queued": 2 },
+      "steps": [
+        { "arrive": "a", "active": ["a"], "queued": [], "refused": {} },
+        { "arrive": "b", "active": ["a"], "queued": ["b"], "refused": {} },
+        { "arrive": "c", "active": ["a"], "queued": ["b", "c"], "refused": {} },
+        { "arrive": "d", "priority": 1, "active": ["a"], "queued": ["b", "d"], "refused": { "c": "shed" } },
+        { "arrive": "e", "priority": 1, "active": ["a"], "queued": ["d", "e"], "refused": { "b": "shed" } },
+        { "arrive": "f", "priority": 1, "active": ["a"], "queued": ["d", "e"], "refused": { "f": "queue_full" } },
+        { "release": "a", "active": ["d"], "queued": ["e"], "refused": {} }
+      ]
+    },
+    {
+      "name": "max_queued 0: start now or not at all",
+      "options": { "max_concurrent": 1, "max_queued": 0 },
+      "steps": [
+        { "arrive": "a", "active": ["a"], "queued": [], "refused": {} },
+        { "arrive": "b", "priority": 9, "active": ["a"], "queued": [], "refused": { "b": "queue_full" } },
+        { "release": "a", "active": [], "queued": [], "refused": {} },
+        { "arrive": "c", "active": ["c"], "queued": [], "refused": {} }
+      ]
+    },
+    {
+      "name": "tenant_max_queued bounds one tenant's share of the queue",
+      "options": { "max_concurrent": 1, "tenant_max_queued": 1 },
+      "steps": [
+        { "arrive": "a", "tenant": "x", "active": ["a"], "queued": [], "refused": {} },
+        { "arrive": "b", "tenant": "x", "active": ["a"], "queued": ["b"], "refused": {} },
+        { "arrive": "c", "tenant": "x", "priority": 3, "active": ["a"], "queued": ["b"], "refused": { "c": "queue_full" } },
+        { "arrive": "d", "tenant": "y", "active": ["a"], "queued": ["b", "d"], "refused": {} },
+        { "arrive": "e", "active": ["a"], "queued": ["b", "d", "e"], "refused": {} }
+      ]
+    },
+    {
+      "name": "a cancelled waiting run leaves the queue; a cancelled admitted run keeps its slot",
+      "options": { "max_concurrent": 1 },
+      "steps": [
+        { "arrive": "a", "active": ["a"], "queued": [], "refused": {} },
+        { "arrive": "b", "active": ["a"], "queued": ["b"], "refused": {} },
+        { "arrive": "c", "active": ["a"], "queued": ["b", "c"], "refused": {} },
+        { "cancel": "b", "active": ["a"], "queued": ["c"], "refused": { "b": "cancelled" } },
+        { "cancel": "a", "active": ["a"], "queued": ["c"], "refused": {} },
+        { "release": "a", "active": ["c"], "queued": [], "refused": {} }
+      ]
+    },
+    {
+      "name": "closing refuses every waiting run and every later one, and stops no running run",
+      "options": { "max_concurrent": 1 },
+      "steps": [
+        { "arrive": "a", "active": ["a"], "queued": [], "refused": {} },
+        { "arrive": "b", "active": ["a"], "queued": ["b"], "refused": {} },
+        { "arrive": "c", "priority": 2, "active": ["a"], "queued": ["b", "c"], "refused": {} },
+        { "close": true, "active": ["a"], "queued": [], "refused": { "b": "closed", "c": "closed" } },
+        { "arrive": "d", "active": ["a"], "queued": [], "refused": { "d": "closed" } },
+        { "release": "a", "active": [], "queued": [], "refused": {} }
+      ]
+    }
+  ]
+}

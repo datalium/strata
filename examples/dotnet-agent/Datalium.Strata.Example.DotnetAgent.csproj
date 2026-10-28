@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>dotnet-Datalium.Strata.Example.DotnetAgent-002f45ea-451e-4b77-9a9c-dbe18aea6e73</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.12" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The hosting package brings the engine and the stores with it, as Datalium.Strata.Hosting's NuGet package does. -->
+    <ProjectReference Include="..\..\dotnet\src\Datalium.Strata.Hosting\Datalium.Strata.Hosting.csproj" />
+    <!-- [StrataTool]-annotated methods in this project (TicketTools.cs) need the generator
+         wired in directly — analyzer references aren't transitive through an ordinary
+         ProjectReference (see Datalium.Strata.csproj's own comment on this). -->
+    <ProjectReference Include="..\..\dotnet\src\Datalium.Strata.SourceGenerators\Datalium.Strata.SourceGenerators.csproj"
+                       OutputItemType="Analyzer"
+                       ReferenceOutputAssembly="false" />
+  </ItemGroup>
+</Project>

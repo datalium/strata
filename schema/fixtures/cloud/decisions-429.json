@@ -1,0 +1,49 @@
+{
+  "description": "Too many long-polls held for the account: Unavailable with Retry-After, not retried by the client (the worker waits).",
+  "operation": "decisions",
+  "query": {
+    "thread_id": null,
+    "limit": null,
+    "cursor": null,
+    "wait_seconds": 25
+  },
+  "exchanges": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1/sdk/decisions",
+        "query": {
+          "wait": "25"
+        },
+        "headers": {
+          "authorization": "Bearer {api_key}",
+          "accept": "application/json"
+        },
+        "absent_headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "retry-after": "5"
+        },
+        "body": {
+          "status": "FAILED",
+          "code": "STRATA_CLOUD_API_RATE_LIMITED",
+          "error": "Too many requests",
+          "timestamp": "2026-10-09T12:00:00.000Z",
+          "statusCode": 429
+        }
+      }
+    }
+  ],
+  "expect": {
+    "error": {
+      "kind": "unavailable",
+      "status": 429,
+      "code": "STRATA_CLOUD_API_RATE_LIMITED",
+      "attempts": 1,
+      "retry_after_ms": 5000
+    }
+  }
+}

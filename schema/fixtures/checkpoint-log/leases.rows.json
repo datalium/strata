@@ -1,0 +1,20 @@
+{
+  "description": "Rows of checkpoint_leases (design/32-Thread-Leases.md) as any writer leaves them, and what every SQL store must make of them. expires_at is Unix milliseconds: SQLite stores the number, Postgres to_timestamp(expires_at / 1000.0). t-held is held until 2100; t-expired's lease ran out in 2000 and nobody took the thread; t-released's was given up, which clears its owner and expiry and keeps its token. 'leases' is what GetLeaseAsync / get_lease returns for each thread (null: not held), and 'next_tokens' the token the next acquisition gets (null: it is refused, the thread is held). t-never has no row.",
+  "rows": [
+    { "thread_id": "t-held", "owner": "worker-2", "token": 7, "expires_at": 4102444800000 },
+    { "thread_id": "t-expired", "owner": "worker-1", "token": 3, "expires_at": 946684800000 },
+    { "thread_id": "t-released", "owner": null, "token": 5, "expires_at": null }
+  ],
+  "leases": {
+    "t-held": { "owner": "worker-2", "token": 7, "expires_at": "2100-01-01T00:00:00Z" },
+    "t-expired": null,
+    "t-released": null,
+    "t-never": null
+  },
+  "next_tokens": {
+    "t-held": null,
+    "t-expired": 4,
+    "t-released": 6,
+    "t-never": 1
+  }
+}

@@ -1,0 +1,40 @@
+[package]
+name = "strata-bench"
+description = "Benchmarks for Datalium Strata: criterion microbenchmarks and the strata-bench profile (design/37-Benchmarks.md). Not published."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+# The scenarios both the microbenchmarks and the profile run. No benchmarks of its own.
+[lib]
+bench = false
+
+# The profile: latency percentiles, throughput under concurrency, memory per suspended thread, the stores.
+[[bin]]
+name = "strata-bench"
+path = "src/main.rs"
+bench = false
+
+# The microbenchmarks: what the engine costs with no I/O.
+[[bench]]
+name = "engine"
+harness = false
+
+[dependencies]
+chrono = "0.4"
+datalium-strata = { workspace = true }
+datalium-strata-memory = { workspace = true }
+# Only to read what the stores record of each checkpoint they write (large_state's stored_bytes).
+metrics = "0.24"
+# Only to sweep the profile's own key prefix out of Redis when it is done.
+redis = { version = "1.7.0", default-features = false, features = ["aio", "tokio-comp"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }
+
+[dev-dependencies]
+# Without the default features: no plots, no rayon. The numbers go to benchmarks/RESULTS.md by hand.
+criterion = { version = "0.8", default-features = false, features = ["async_tokio", "cargo_bench_support"] }

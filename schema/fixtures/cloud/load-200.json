@@ -1,0 +1,36 @@
+{
+  "description": "The latest checkpoint, with its sequence from Strata-Sequence.",
+  "operation": "load",
+  "thread_id": "thread_hitl_demo",
+  "exchanges": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1/sdk/checkpoints/latest",
+        "query": {
+          "thread_id": "thread_hitl_demo"
+        },
+        "headers": {
+          "authorization": "Bearer {api_key}",
+          "accept": "application/json"
+        },
+        "absent_headers": [
+          "content-type"
+        ],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "strata-sequence": "3",
+          "etag": "W/\"c1-K4Q0ZC9LZ3PE2M6TJ1U7WV8XYB5NDA\""
+        },
+        "body_file": "../checkpoint-lifecycle/frozen.json"
+      }
+    }
+  ],
+  "expect": {
+    "checkpoint": "../checkpoint-lifecycle/frozen.json",
+    "sequence": 3
+  }
+}

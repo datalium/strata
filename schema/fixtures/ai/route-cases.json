@@ -1,0 +1,1740 @@
+{
+  "description": "The model route's shared cases (design/46-Model-Routes.md, \"The exact rules\"), replayed by rust/strata-ai/tests/route_cases.rs and dotnet/tests/Datalium.Strata.Tests/AI/ModelRouteCaseTests.cs on a fake clock starting at 0 ms. Not a wire format: it pins failover, health, hedging and the messages across the two engines. Each case builds one route named `r` from `candidates` in order, with `hedge_after_ms` (absent: no hedging), `breaker` ({failures, open_for_ms}; absent: none) and `accept` (absent: everything accepted; {reject_containing, reason}: an answer whose text contains it is rejected with that reason). A candidate has a `name`, a `provider` (its scripted client's provider name and so its health key; absent: `p-<name>`), a `model` (absent: none, so the request's is used), `ineligible` (a reason its eligibility check gives on every call; absent: eligible) and a `script`: one step per time that candidate is asked, in order. A step is `answer` (text; `finish_reason` content_filter makes it a refusal), `stream` (the updates' texts, then `break` to fail after them, or a `finish_reason`) or `fail` (`status`, transient or fatal as design/44's status rule says, or `error` `connection`, transient with no status; with `retry_after_ms` and `message`); `delay_ms` (default 0) is how long the client takes to answer, to fail, or to give a stream's first update (later updates follow at once). The scripted client answers with the model it was asked for, and usage 10 in, 5 out. The request names model `requested`. `calls` run in order, each started when the clock reaches `at_ms`; `stream` true calls the route's stream and collects it. `expect` holds `answer` ({candidate, text, model}) or `error` ({kind, error_type, retry_after_ms, message}: the route's own error, or the candidate's scripted failure as it is); `ends_at_ms`, the clock when the call returned (checked when given); `attempts`, every candidate's outcome from OnRouted, in declaration order; `hedges`; and `health`, the named keys' Snapshot after the call ({state, failures, until_ms when cooling_down or open}).",
+  "cases": [
+    {
+      "name": "the first candidate answers",
+      "candidates": [
+        {
+          "name": "a",
+          "model": "m-a",
+          "script": [
+            {
+              "answer": "one"
+            }
+          ]
+        },
+        {
+          "name": "b",
+          "model": "m-b",
+          "script": []
+        }
+      ],
+      "calls": [
+        {
+          "at_ms": 0,
+          "expect": {
+            "answer": {
+              "candidate": "a",
+              "text": "one",
+              "model": "m-a"
+            },
+            "ends_at_ms": 0,
+            "attempts": [
+              {
+                "candidate": "a",
+                "outcome": "answered"
+              },
+              {
+                "candidate": "b",
+                "outcome": "not_tried"
+              }
+            ],
+            "hedges": 0,
+            "health": {
+              "p-a": {
+                "state": "available",
+                "failures": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "without a model of its own a candidate is asked for the request's",
+      "candidates": [
+        {
+          "name": "a",
+          "script": [
+            {
+              "answer": "x"
+            }
+          ]
+        }
+      ],
+      "calls": [
+        {
+          "at_ms": 0,
+          "expect": {
+            "answer": {
+              "candidate": "a",
+              "text": "x",
+              "model": "requested"
+            },
+            "attempts": [
+              {
+                "candidate": "a",
+                "outcome": "answered"
+              }
+            ],
+            "hedges": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "a transient fault fails over and cools its key down until Retry-After passes",
+      "candidates": [
+        {
+          "name": "a",
+          "model": "m-a",
+          "script": [
+            {
+              "fail": {
+                "status": 429,
+                "retry_after_ms": 5000,
+                "message": "slow down"
+              }
+            },
+            {
+              "answer": "four"
+            }
+          ]
+        },
+        {
+          "name": "b",
+          "model": "m-b",
+          "script": [
+            {
+              "answer": "two"
+            },
+            {
+              "answer": "three"
+            }
+          ]
+        }
+      ],
+      "calls": [
+        {
+          "at_ms": 0,
+          "expect": {
+            "answer": {
+              "candidate": "b",
+              "text": "two",
+              "model": "m-b"
+            },
+            "attempts": [
+              {
+                "candidate": "a",
+                "outcome": "failed"
+              },
+              {
+                "candidate": "b",
+                "outcome": "answered"
+              }
+            ],
+            "hedges": 0,
+            "health": {
+              "p-a": {
+                "state": "cooling_down",
+                "failures": 1,
+                "until_ms": 5000
+              },
+              "p-b": {
+                "state": "available",
+                "failures": 0
+              }
+            }
+          }
+        },
+        {
+          "at_ms": 1000,
+          "expect": {
+            "answer": {
+              "candidate": "b",
+              "text": "three",
+              "model": "m-b"
+            },
+            "attempts": [
+              {
+                "candidate": "a",
+                "outcome": "cooling_down"
+              },
+              {
+                "candidate": "b",
+                "outcome": "answered"
+              }
+            ],
+            "hedges": 0
+          }
+        },
+        {
+          "at_ms": 6000,
+          "expect": {
+            "answer": {
+              "candidate": "a",
+              "text": "four",
+              "model": "m-a"
+            },
+            "attempts": [
+              {
+                "candidate": "a",
+                "outcome": "answered"
+              },
+              {
+                "candidate": "b",
+                "outcome": "not_tried"
+              }
+            ],
+            "hedges": 0,
+            "health": {
+              "p-a": {
+                "state": "available",
+                "failures": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a fatal fault stops the route with the candidate's own error",
+      "candidates": [
+        {
+          "name": "a",
+          "script": [
+            {
+              "fail": {
+                "status": 400,
+                "message": "bad request"
+              }
+            }
+          ]
+        },
+        {
+          "name": "b",
+          "script": [
+            {
+              "answer": "never"
+            }
+          ]
+        }
+      ],
+      "calls": [
+        {
+          "at_ms": 0,
+          "expect": {
+            "error": {
+              "kind": "fatal",
+              "error_type": "400",
+              "retry_after_ms": null,
+              "message": "bad request"
+            },
+            "attempts": [
+              {
+                "candidate": "a",
+                "outcome": "failed"
+              },
+              {
+                "candidate": "b",
+                "outcome": "not_tried"
+              }
+            ],
+            "hedges": 0,
+            "health": {
+              "p-a": {
+                "state": "available",
+                "failures": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a refusal fails over and leaves health alone",
+      "candidates": [
+        {
+          "name": "a",
+          "script": [
+            {
+              "answer": "no",
+              "finish_reason": "content_filter"
+            }
+          ]
+        },
+        {
+          "name": "b",
+          "script": [
+            {
+              "answer": "yes"
+            }
+          ]
+        }
+      ],
+      "calls": [
+        {
+          "at_ms": 0,
+          "expect": {
+            "answer": {
+              "candidate": "b",
+              "text": "yes",
+              "model": "requested"
+            },
+            "attempts": [
+              {
+                "candidate": "a",
+                "outcome": "refused"
+              },
+              {
+                "candidate": "b",
+                "outcome": "answered"
+              }
+            ],
+            "hedges": 0,
+            "health": {
+              "p-a": {
+                "state": "available",
+                "failures": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "an answer Accept rejects fails over and leaves health alone",
+      "accept": {
+        "reject_containing": "REJECT",
+        "reason": "it said REJECT"
+      },
+      "candidates": [
+        {
+          "name": "a",
+          "script": [
+            {
+              "answer": "REJECT this"
+            }
+          ]
+        },
+        {
+          "name": "b",
+          "script": [
+            {
+              "answer": "fine"
+            }
+          ]
+        }
+      ],
+      "calls": [
+        {
+          "at_ms": 0,
+          "expect": {
+            "answer": {
+              "candidate": "b",
+              "text": "fine",
+              "model": "requested"
+            },
+            "attempts": [
+              {
+                "candidate": "a",
+                "outcome": "rejected"
+              },
+              {
+                "candidate": "b",
+                "outcome": "answered"
+              }
+            ],
+            "hedges": 0,
+            "health": {
+              "p-a": {
+                "state": "available",
+                "failures": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "exhausted: transient, with the shortest wait until a candidate is free",
+      "candidates": [
+        {
+          "name": "a",
+          "script": [
+            {
+              "fail": {
+                "status": 429,
+                "retry_after_ms": 12000,
+                "message": "slow down"
+              }
+            }
+          ]
+        },
+        {
+          "name": "b",
+          "script": [
+            {
+              "fail": {
+                "status": 503,
+                "retry_after_ms": 5000,
+                "message": "overloaded"
+              }
+            }
+          ]
+        },
+        {
+          "name": "c",
+          "ineligible": "over budget",
+          "script": []
+        }
+      ],
+      "calls": [
+        {
+          "at_ms": 0,
+          "expect": {
+            "error": {
+              "kind": "transient",
+              "error_type": "route_exhausted",
+              "retry_after_ms": 5000,
+              "message": "no candidate of route 'r' answered: a failed (429), b failed (503), c is ineligible (over budget)"
+            },
+            "attempts": [
+              {
+                "candidate": "a",
+                "outcome": "failed"
+              },
+              {
+                "candidate": "b",
+                "outcome": "failed"
+              },
+              {
+                "candidate": "c",
+                "outcome": "ineligible"
+              }
+            ],
+            "hedges": 0,
+            "health": {
+              "p-a": {
+                "state": "cooling_down",
+                "failures": 1,
+                "until_ms": 12000
+              },
+              "p-b": {
+                "state": "cooling_down",
+                "failures": 1,
+                "until_ms": 5000
+              }
+            }
+          }
+        },
+        {
+          "at_ms": 2000,
+          "expect": {
+            "error": {
+              "kind": "transient",
+              "error_type": "route_exhausted",
+              "retry_after_ms": 3000,
+              "message": "no candidate of route 'r' answered: a is cooling down for 10 s, b is cooling down for 3 s, c is ineligible (over budget)"
+            },
+            "attempts": [
+              {
+                "candidate": "a",
+                "outcome": "cooling_down"
+              },
+              {
+                "candidate": "b",
+                "outcome": "cooling_down"
+              },
+              {
+                "candidate": "c",
+                "outcome": "ineligible"
+              }
+            ],
+            "hedges": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "exhausted with a candidate free at once carries no hint",
+      "candidates": [
+        {
+          "name": "a",
+          "script": [
+            {
+              "fail": {
+                "status": 429,
+                "retry_after_ms": 5000,
+                "message": "slow down"
+              }
+            }
+          ]
+        },
+        {
+          "name": "b",
+          "script": [
+            {
+              "fail": {
+                "error": "connection",
+                "message": "connection refused"
+              }
+            }
+          ]
+        }
+      ],
+      "calls": [
+        {
+          "at_ms": 0,
+          "expect": {
+            "error": {
+              "kind": "transient",
+              "error_type": "route_exhausted",
+              "retry_after_ms": null,
+              "message": "no candidate of route 'r' answered: a failed (429), b failed (connection)"
+            },
+            "attempts": [
+              {
+                "candidate": "a",
+                "outcome": "failed"
+              },
+              {
+                "candidate": "b",
+                "outcome": "failed"
+              }
+            ],
+            "hedges": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "every candidate ineligible is fatal",
+      "candidates": [
+        {
+          "name": "a",
+          "ineligible": "no tools",
+          "script": []
+        },
+        {
+          "name": "b",
+          "ineligible": "over budget",
+          "script": []
+        }
+      ],
+      "calls": [
+        {
+          "at_ms": 0,
+          "expect": {
+            "error": {
+              "kind": "fatal",
+              "error_type": "route_ineligible",
+              "retry_after_ms": null,
+              "message": "no candidate of route 'r' can take this request: a is ineligible (no tools), b is ineligible (over budget)"
+            },
+            "attempts": [
+              {
+                "candidate": "a",
+                "outcome": "ineligible"
+              },
+              {
+                "candidate": "b",
+                "outcome": "ineligible"
+              }
+            ],
+            "hedges": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "a cooldown on a shared key skips the key's other candidates in the same call",
+      "candidates": [
+        {
+          "name": "a",
+          "provider": "shared",
+          "script": [
+            {
+              "fail": {
+                "status": 429,
+                "retry_after_ms": 5000,
+                "message": "slow down"
+              }
+            }
+          ]
+        },
+        {
+          "name": "b",
+          "provider": "shared",
+          "script": []
+        },
+        {
+          "name": "c",
+          "script": [
+            {
+              "answer": "c"
+            }
+          ]
+        }
+      ],
+      "calls": [
+        {
+          "at_ms": 0,
+          "expect": {
+            "answer": {
+              "candidate": "c",
+              "text": "c",
+              "model": "requested"
+            },
+            "attempts": [
+              {
+                "candidate": "a",
+                "outcome": "failed"
+              },
+              {
+                "candidate": "b",
+                "outcome": "cooling_down"
+              },
+              {
+                "candidate": "c",
+                "outcome": "answered"
+              }
+            ],
+            "hedges": 0,
+            "health": {
+              "shared": {
+                "state": "cooling_down",
+                "failures": 1,
+                "until_ms": 5000
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "the breaker opens after failures in a row, half-opens, and a success closes it",
+      "breaker": {
+        "failures": 2,
+        "open_for_ms": 30000
+      },
+      "candidates": [
+        {
+          "name": "a",
+          "script": [
+            {
+              "fail": {
+                "error": "connection",
+                "message": "connection refused"
+              }
+            },
+            {
+              "fail": {
+                "error": "connection",
+                "message": "connection refused"
+              }
+            },
+            {
+              "answer": "a is back"
+            }
+          ]
+        },
+        {
+          "name": "b",
+          "script": [
+            {
+              "answer": "b1"
+            },
+            {
+              "answer": "b2"
+            },
+            {
+              "answer": "b3"
+            }
+          ]
+        }
+      ],
+      "calls": [
+        {
+          "at_ms": 0,
+          "expect": {
+            "answer": {
+              "candidate": "b",
+              "text": "b1",
+              "model": "requested"
+            },
+            "attempts": [
+              {
+                "candidate": "a",
+                "outcome": "failed"
+              },
+              {
+                "candidate": "b",
+                "outcome": "answered"
+              }
+            ],
+            "hedges": 0,
+            "health": {
+              "p-a": {
+                "state": "available",
+                "failures": 1
+              }
+            }
+          }
+        },
+        {
+          "at_ms": 1000,
+          "expect": {
+            "answer": {
+              "candidate": "b",
+              "text": "b2",
+              "model": "requested"
+            },
+            "attempts": [
+              {
+                "candidate": "a",
+                "outcome": "failed"
+              },
+              {
+                "candidate": "b",
+                "outcome": "answered"
+              }
+            ],
+            "hedges": 0,
+            "health": {
+              "p-a": {
+                "state": "open",
+                "failures": 2,
+                "until_ms": 31000
+              }
+            }
+          }
+        },
+        {
+          "at_ms": 10000,
+          "expect": {
+            "answer": {
+              "candidate": "b",
+              "text": "b3",
+              "model": "requested"
+            },
+            "attempts": [
+              {
+                "candidate": "a",
+                "outcome": "breaker_open"
+              },
+              {
+                "candidate": "b",
+                "outcome": "answered"
+              }
+            ],
+            "hedges": 0
+          }
+        },
+        {
+          "at_ms": 31000,
+          "expect": {
+            "answer": {
+              "candidate": "a",
+              "text": "a is back",
+              "model": "requested"
+            },
+            "attempts": [
+              {
+                "candidate": "a",
+                "outcome": "answered"
+              },
+              {
+                "candidate": "b",
+                "outcome": "not_tried"
+              }
+            ],
+            "hedges": 0,
+            "health": {
+              "p-a": {
+                "state": "available",
+                "failures": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a failed half-open test opens the breaker again",
+      "breaker": {
+        "failures": 1,
+        "open_for_ms": 30000
+      },
+      "candidates": [
+        {
+          "name": "a",
+          "script": [
+            {
+              "fail": {
+                "error": "connection",
+                "message": "connection refused"
+              }
+            },
+            {
+              "fail": {
+                "error": "connection",
+                "message": "connection refused"
+              }
+            }
+          ]
+        },
+        {
+          "name": "b",
+          "script": [
+            {
+              "answer": "x"
+            },
+            {
+              "answer": "y"
+            },
+            {
+              "answer": "z"
+            }
+          ]
+        }
+      ],
+      "calls": [
+        {
+          "at_ms": 0,
+          "expect": {
+            "answer": {
+              "candidate": "b",
+              "text": "x",
+              "model": "requested"
+            },
+            "attempts": [
+              {
+                "candidate": "a",
+                "outcome": "failed"
+              },
+              {
+                "candidate": "b",
+                "outcome": "answered"
+              }
+            ],
+            "hedges": 0,
+            "health": {
+              "p-a": {
+                "state": "open",
+                "failures": 1,
+                "until_ms": 30000
+              }
+            }
+          }
+        },
+        {
+          "at_ms": 30000,
+          "expect": {
+            "answer": {
+              "candidate": "b",
+              "text": "y",
+              "model": "requested"
+            },
+            "attempts": [
+              {
+                "candidate": "a",
+                "outcome": "failed"
+              },
+              {
+                "candidate": "b",
+                "outcome": "answered"
+              }
+            ],
+            "hedges": 0,
+            "health": {
+              "p-a": {
+                "state": "open",
+                "failures": 2,
+                "until_ms": 60000
+              }
+            }
+          }
+        },
+        {
+          "at_ms": 40000,
+          "expect": {
+            "answer": {
+              "candidate": "b",
+              "text": "z",
+              "model": "requested"
+            },
+            "attempts": [
+              {
+                "candidate": "a",
+                "outcome": "breaker_open"
+              },
+              {
+                "candidate": "b",
+                "outcome": "answered"
+              }
+            ],
+            "hedges": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "an open breaker is in the exhausted message and its hint",
+      "breaker": {
+        "failures": 1,
+        "open_for_ms": 30000
+      },
+      "candidates": [
+        {
+          "name": "a",
+          "script": [
+            {
+              "fail": {
+                "error": "connection",
+                "message": "connection refused"
+              }
+            }
+          ]
+        }
+      ],
+      "calls": [
+        {
+          "at_ms": 0,
+          "expect": {
+            "error": {
+              "kind": "transient",
+              "error_type": "route_exhausted",
+              "retry_after_ms": 30000,
+              "message": "no candidate of route 'r' answered: a failed (connection)"
+            },
+            "attempts": [
+              {
+                "candidate": "a",
+                "outcome": "failed"
+              }
+            ],
+            "hedges": 0
+          }
+        },
+        {
+          "at_ms": 10000,
+          "expect": {
+            "error": {
+              "kind": "transient",
+              "error_type": "route_exhausted",
+              "retry_after_ms": 20000,
+              "message": "no candidate of route 'r' answered: a's breaker is open for 20 s"
+            },
+            "attempts": [
+              {
+                "candidate": "a",
+                "outcome": "breaker_open"
+              }
+            ],
+            "hedges": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "concurrent failures on one key keep the later cooldown",
+      "hedge_after_ms": 4000,
+      "candidates": [
+        {
+          "name": "a",
+          "provider": "shared",
+          "script": [
+            {
+              "fail": {
+                "status": 429,
+                "retry_after_ms": 60000,
+                "message": "slow down"
+              },
+              "delay_ms": 5000
+            }
+          ]
+        },
+        {
+          "name": "b",
+          "provider": "shared",
+          "script": [
+            {
+              "fail": {
+                "status": 429,
+                "retry_after_ms": 1000,
+                "message": "slow down"
+              },
+              "delay_ms": 2000
+            }
+          ]
+        },
+        {
+          "name": "c",
+          "script": [
+            {
+              "answer": "c"
+            }
+          ]
+        }
+      ],
+      "calls": [
+        {
+          "at_ms": 0,
+          "expect": {
+            "answer": {
+              "candidate": "c",
+              "text": "c",
+              "model": "requested"
+            },
+            "ends_at_ms": 6000,
+            "attempts": [
+              {
+                "candidate": "a",
+                "outcome": "failed"
+              },
+              {
+                "candidate": "b",
+                "outcome": "failed"
+              },
+              {
+                "candidate": "c",
+                "outcome": "answered"
+              }
+            ],
+            "hedges": 1,
+            "health": {
+              "shared": {
+                "state": "cooling_down",
+                "failures": 2,
+                "until_ms": 65000
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a failure on a key whose breaker is already open doesn't push it back",
+      "hedge_after_ms": 4000,
+      "breaker": {
+        "failures": 1,
+        "open_for_ms": 10000
+      },
+      "candidates": [
+        {
+          "name": "a",
+          "provider": "shared",
+          "script": [
+            {
+              "fail": {
+                "error": "connection",
+                "message": "connection refused"
+              },
+              "delay_ms": 5000
+            }
+          ]
+        },
+        {
+          "name": "b",
+          "provider": "shared",
+          "script": [
+            {
+              "fail": {
+                "error": "connection",
+                "message": "connection refused"
+              },
+              "delay_ms": 2000
+            }
+          ]
+        },
+        {
+          "name": "c",
+          "script": [
+            {
+              "answer": "c"
+            }
+          ]
+        }
+      ],
+      "calls": [
+        {
+          "at_ms": 0,
+          "expect": {
+            "answer": {
+              "candidate": "c",
+              "text": "c",
+              "model": "requested"
+            },
+            "ends_at_ms": 6000,
+            "attempts": [
+              {
+                "candidate": "a",
+                "outcome": "failed"
+              },
+              {
+                "candidate": "b",
+                "outcome": "failed"
+              },
+              {
+                "candidate": "c",
+                "outcome": "answered"
+              }
+            ],
+            "hedges": 1,
+            "health": {
+              "shared": {
+                "state": "open",
+                "failures": 2,
+                "until_ms": 15000
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a quick answer needs no hedge",
+      "hedge_after_ms": 20000,
+      "candidates": [
+        {
+          "name": "a",
+          "script": [
+            {
+              "answer": "quick",
+              "delay_ms": 1000
+            }
+          ]
+        },
+        {
+          "name": "b",
+          "script": []
+        }
+      ],
+      "calls": [
+        {
+          "at_ms": 0,
+          "expect": {
+            "answer": {
+              "candidate": "a",
+              "text": "quick",
+              "model": "requested"
+            },
+            "ends_at_ms": 1000,
+            "attempts": [
+              {
+                "candidate": "a",
+                "outcome": "answered"
+              },
+              {
+                "candidate": "b",
+                "outcome": "not_tried"
+              }
+            ],
+            "hedges": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "a hedge wins when the first candidate is slow",
+      "hedge_after_ms": 20000,
+      "candidates": [
+        {
+          "name": "a",
+          "script": [
+            {
+              "answer": "slow",
+              "delay_ms": 30000
+            }
+          ]
+        },
+        {
+          "name": "b",
+          "script": [
+            {
+              "answer": "fast",
+              "delay_ms": 1000
+            }
+          ]
+        }
+      ],
+      "calls": [
+        {
+          "at_ms": 0,
+          "expect": {
+            "answer": {
+              "candidate": "b",
+              "text": "fast",
+              "model": "requested"
+            },
+            "ends_at_ms": 21000,
+            "attempts": [
+              {
+                "candidate": "a",
+                "outcome": "lost_race"
+              },
+              {
+                "candidate": "b",
+                "outcome": "answered"
+              }
+            ],
+            "hedges": 1,
+            "health": {
+              "p-a": {
+                "state": "available",
+                "failures": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "the first candidate still wins after a hedge has started",
+      "hedge_after_ms": 20000,
+      "candidates": [
+        {
+          "name": "a",
+          "script": [
+            {
+              "answer": "first",
+              "delay_ms": 25000
+            }
+          ]
+        },
+        {
+          "name": "b",
+          "script": [
+            {
+              "answer": "second",
+              "delay_ms": 10000
+            }
+          ]
+        }
+      ],
+      "calls": [
+        {
+          "at_ms": 0,
+          "expect": {
+            "answer": {
+              "candidate": "a",
+              "text": "first",
+              "model": "requested"
+            },
+            "ends_at_ms": 25000,
+            "attempts": [
+              {
+                "candidate": "a",
+                "outcome": "answered"
+              },
+              {
+                "candidate": "b",
+                "outcome": "lost_race"
+              }
+            ],
+            "hedges": 1
+          }
+        }
+      ]
+    },
+    {
+      "name": "a rejected answer lets a hedged attempt go on",
+      "hedge_after_ms": 20000,
+      "accept": {
+        "reject_containing": "REJECT",
+        "reason": "it said REJECT"
+      },
+      "candidates": [
+        {
+          "name": "a",
+          "script": [
+            {
+              "answer": "REJECT",
+              "delay_ms": 25000
+            }
+          ]
+        },
+        {
+          "name": "b",
+          "script": [
+            {
+              "answer": "ok",
+              "delay_ms": 10000
+            }
+          ]
+        }
+      ],
+      "calls": [
+        {
+          "at_ms": 0,
+          "expect": {
+            "answer": {
+              "candidate": "b",
+              "text": "ok",
+              "model": "requested"
+            },
+            "ends_at_ms": 30000,
+            "attempts": [
+              {
+                "candidate": "a",
+                "outcome": "rejected"
+              },
+              {
+                "candidate": "b",
+                "outcome": "answered"
+              }
+            ],
+            "hedges": 1
+          }
+        }
+      ]
+    },
+    {
+      "name": "a failure before the hedge fails over at once",
+      "hedge_after_ms": 20000,
+      "candidates": [
+        {
+          "name": "a",
+          "script": [
+            {
+              "fail": {
+                "error": "connection",
+                "message": "connection refused"
+              },
+              "delay_ms": 5000
+            }
+          ]
+        },
+        {
+          "name": "b",
+          "script": [
+            {
+              "answer": "b",
+              "delay_ms": 1000
+            }
+          ]
+        }
+      ],
+      "calls": [
+        {
+          "at_ms": 0,
+          "expect": {
+            "answer": {
+              "candidate": "b",
+              "text": "b",
+              "model": "requested"
+            },
+            "ends_at_ms": 6000,
+            "attempts": [
+              {
+                "candidate": "a",
+                "outcome": "failed"
+              },
+              {
+                "candidate": "b",
+                "outcome": "answered"
+              }
+            ],
+            "hedges": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "hedges start one candidate at a time",
+      "hedge_after_ms": 10000,
+      "candidates": [
+        {
+          "name": "a",
+          "script": [
+            {
+              "answer": "a",
+              "delay_ms": 100000
+            }
+          ]
+        },
+        {
+          "name": "b",
+          "script": [
+            {
+              "answer": "b",
+              "delay_ms": 100000
+            }
+          ]
+        },
+        {
+          "name": "c",
+          "script": [
+            {
+              "answer": "c",
+              "delay_ms": 5000
+            }
+          ]
+        }
+      ],
+      "calls": [
+        {
+          "at_ms": 0,
+          "expect": {
+            "answer": {
+              "candidate": "c",
+              "text": "c",
+              "model": "requested"
+            },
+            "ends_at_ms": 25000,
+            "attempts": [
+              {
+                "candidate": "a",
+                "outcome": "lost_race"
+              },
+              {
+                "candidate": "b",
+                "outcome": "lost_race"
+              },
+              {
+                "candidate": "c",
+                "outcome": "answered"
+              }
+            ],
+            "hedges": 2
+          }
+        }
+      ]
+    },
+    {
+      "name": "a stream that fails to start fails over",
+      "candidates": [
+        {
+          "name": "a",
+          "script": [
+            {
+              "fail": {
+                "status": 503,
+                "message": "overloaded"
+              }
+            }
+          ]
+        },
+        {
+          "name": "b",
+          "script": [
+            {
+              "stream": [
+                "Hel",
+                "lo"
+              ]
+            }
+          ]
+        }
+      ],
+      "calls": [
+        {
+          "at_ms": 0,
+          "stream": true,
+          "expect": {
+            "answer": {
+              "candidate": "b",
+              "text": "Hello",
+              "model": "requested"
+            },
+            "attempts": [
+              {
+                "candidate": "a",
+                "outcome": "failed"
+              },
+              {
+                "candidate": "b",
+                "outcome": "answered"
+              }
+            ],
+            "hedges": 0,
+            "health": {
+              "p-a": {
+                "state": "available",
+                "failures": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a stream that breaks before its first update fails over",
+      "candidates": [
+        {
+          "name": "a",
+          "script": [
+            {
+              "stream": [],
+              "break": {
+                "status": 500,
+                "message": "broken"
+              }
+            }
+          ]
+        },
+        {
+          "name": "b",
+          "script": [
+            {
+              "stream": [
+                "ok"
+              ]
+            }
+          ]
+        }
+      ],
+      "calls": [
+        {
+          "at_ms": 0,
+          "stream": true,
+          "expect": {
+            "answer": {
+              "candidate": "b",
+              "text": "ok",
+              "model": "requested"
+            },
+            "attempts": [
+              {
+                "candidate": "a",
+                "outcome": "failed"
+              },
+              {
+                "candidate": "b",
+                "outcome": "answered"
+              }
+            ],
+            "hedges": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "a stream that breaks after its first update fails the call",
+      "candidates": [
+        {
+          "name": "a",
+          "script": [
+            {
+              "stream": [
+                "Hel"
+              ],
+              "break": {
+                "status": 500,
+                "message": "broken"
+              }
+            }
+          ]
+        },
+        {
+          "name": "b",
+          "script": [
+            {
+              "stream": [
+                "never"
+              ]
+            }
+          ]
+        }
+      ],
+      "calls": [
+        {
+          "at_ms": 0,
+          "stream": true,
+          "expect": {
+            "error": {
+              "kind": "transient",
+              "error_type": "500",
+              "retry_after_ms": null,
+              "message": "broken"
+            },
+            "attempts": [
+              {
+                "candidate": "a",
+                "outcome": "failed"
+              },
+              {
+                "candidate": "b",
+                "outcome": "not_tried"
+              }
+            ],
+            "hedges": 0,
+            "health": {
+              "p-a": {
+                "state": "available",
+                "failures": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a streamed answer Accept rejects fails the call",
+      "accept": {
+        "reject_containing": "REJECT",
+        "reason": "it said REJECT"
+      },
+      "candidates": [
+        {
+          "name": "a",
+          "script": [
+            {
+              "stream": [
+                "REJ",
+                "ECT"
+              ]
+            }
+          ]
+        },
+        {
+          "name": "b",
+          "script": [
+            {
+              "stream": [
+                "never"
+              ]
+            }
+          ]
+        }
+      ],
+      "calls": [
+        {
+          "at_ms": 0,
+          "stream": true,
+          "expect": {
+            "error": {
+              "kind": "transient",
+              "error_type": "rejected",
+              "retry_after_ms": null,
+              "message": "route 'r': a's streamed answer was rejected (it said REJECT)"
+            },
+            "attempts": [
+              {
+                "candidate": "a",
+                "outcome": "rejected"
+              },
+              {
+                "candidate": "b",
+                "outcome": "not_tried"
+              }
+            ],
+            "hedges": 0,
+            "health": {
+              "p-a": {
+                "state": "available",
+                "failures": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a streamed refusal fails the call",
+      "candidates": [
+        {
+          "name": "a",
+          "script": [
+            {
+              "stream": [
+                "no"
+              ],
+              "finish_reason": "content_filter"
+            }
+          ]
+        },
+        {
+          "name": "b",
+          "script": [
+            {
+              "stream": [
+                "never"
+              ]
+            }
+          ]
+        }
+      ],
+      "calls": [
+        {
+          "at_ms": 0,
+          "stream": true,
+          "expect": {
+            "error": {
+              "kind": "transient",
+              "error_type": "refused",
+              "retry_after_ms": null,
+              "message": "route 'r': a's streamed answer was refused"
+            },
+            "attempts": [
+              {
+                "candidate": "a",
+                "outcome": "refused"
+              },
+              {
+                "candidate": "b",
+                "outcome": "not_tried"
+              }
+            ],
+            "hedges": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "a hedged stream: the first to give an update wins",
+      "hedge_after_ms": 20000,
+      "candidates": [
+        {
+          "name": "a",
+          "script": [
+            {
+              "stream": [
+                "slow"
+              ],
+              "delay_ms": 30000
+            }
+          ]
+        },
+        {
+          "name": "b",
+          "script": [
+            {
+              "stream": [
+                "fa",
+                "st"
+              ],
+              "delay_ms": 1000
+            }
+          ]
+        }
+      ],
+      "calls": [
+        {
+          "at_ms": 0,
+          "stream": true,
+          "expect": {
+            "answer": {
+              "candidate": "b",
+              "text": "fast",
+              "model": "requested"
+            },
+            "ends_at_ms": 21000,
+            "attempts": [
+              {
+                "candidate": "a",
+                "outcome": "lost_race"
+              },
+              {
+                "candidate": "b",
+                "outcome": "answered"
+              }
+            ],
+            "hedges": 1
+          }
+        }
+      ]
+    }
+  ]
+}

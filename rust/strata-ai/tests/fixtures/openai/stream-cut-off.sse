@@ -1,0 +1,2 @@
+data: {"id":"chatcmpl-3","model":"gpt-test-2026","choices":[{"index":0,"delta":{"content":"Half "},"finish_reason":null}]}
+

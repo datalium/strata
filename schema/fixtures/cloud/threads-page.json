@@ -1,0 +1,136 @@
+{
+  "description": "Due threads, a page of two with no more to come: each row is the query port's ThreadSummary (cases.json's summaries), wait and graph null when absent.",
+  "operation": "list",
+  "query": {
+    "due_by": "2026-10-01T13:00:00Z",
+    "limit": 2
+  },
+  "exchanges": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1/sdk/threads",
+        "query": {
+          "due_by": "2026-10-01T13:00:00Z",
+          "limit": "2"
+        },
+        "headers": {
+          "authorization": "Bearer {api_key}",
+          "accept": "application/json"
+        },
+        "absent_headers": [
+          "content-type"
+        ],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store"
+        },
+        "body": {
+          "threads": [
+            {
+              "thread_id": "timer-initech",
+              "sequence": 0,
+              "state": "interrupted",
+              "status": "interrupted",
+              "suspended_node": "Window",
+              "next_node": "Check",
+              "waiting_at": [
+                "Window"
+              ],
+              "metadata": {
+                "tenant": "initech"
+              },
+              "updated_at": "2026-10-01T03:00:00Z",
+              "schema_version": "1.5.0",
+              "wait": {
+                "kind": "timer",
+                "event_type": null,
+                "wake_at": "2026-10-01T13:00:00Z"
+              },
+              "graph": null
+            },
+            {
+              "thread_id": "nested-timer",
+              "sequence": 0,
+              "state": "interrupted",
+              "status": "interrupted",
+              "suspended_node": "Verify",
+              "next_node": "Verify",
+              "waiting_at": [
+                "Verify",
+                "Window"
+              ],
+              "metadata": {
+                "tenant": "initech"
+              },
+              "updated_at": "2026-10-01T00:15:00Z",
+              "schema_version": "1.5.0",
+              "wait": {
+                "kind": "timer",
+                "event_type": null,
+                "wake_at": "2026-10-01T12:30:00Z"
+              },
+              "graph": null
+            }
+          ],
+          "next_cursor": null
+        }
+      }
+    }
+  ],
+  "expect": {
+    "page": {
+      "threads": [
+        {
+          "thread_id": "timer-initech",
+          "sequence": 0,
+          "state": "interrupted",
+          "status": "interrupted",
+          "suspended_node": "Window",
+          "next_node": "Check",
+          "waiting_at": [
+            "Window"
+          ],
+          "metadata": {
+            "tenant": "initech"
+          },
+          "updated_at": "2026-10-01T03:00:00Z",
+          "schema_version": "1.5.0",
+          "wait": {
+            "kind": "timer",
+            "event_type": null,
+            "wake_at": "2026-10-01T13:00:00Z"
+          },
+          "graph": null
+        },
+        {
+          "thread_id": "nested-timer",
+          "sequence": 0,
+          "state": "interrupted",
+          "status": "interrupted",
+          "suspended_node": "Verify",
+          "next_node": "Verify",
+          "waiting_at": [
+            "Verify",
+            "Window"
+          ],
+          "metadata": {
+            "tenant": "initech"
+          },
+          "updated_at": "2026-10-01T00:15:00Z",
+          "schema_version": "1.5.0",
+          "wait": {
+            "kind": "timer",
+            "event_type": null,
+            "wake_at": "2026-10-01T12:30:00Z"
+          },
+          "graph": null
+        }
+      ],
+      "next_cursor": null
+    }
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "description": "A cursor Cloud didn't issue: 400, a caller's bug, not retried.",
+  "operation": "list",
+  "query": {
+    "limit": 100,
+    "cursor": "bm90LWEtY2xvdWQtY3Vyc29y"
+  },
+  "exchanges": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1/sdk/threads",
+        "query": {
+          "limit": "100",
+          "cursor": "bm90LWEtY2xvdWQtY3Vyc29y"
+        },
+        "headers": {
+          "authorization": "Bearer {api_key}",
+          "accept": "application/json"
+        },
+        "absent_headers": [
+          "content-type"
+        ],
+        "body": null
+      },
+      "response": {
+        "status": 400,
+        "headers": {},
+        "body": {
+          "status": "FAILED",
+          "code": "STRATA_CLOUD_API_VALIDATION_ERROR",
+          "error": "cursor is not one this route issued",
+          "timestamp": "2026-10-20T12:00:00.000Z",
+          "statusCode": 400
+        }
+      }
+    }
+  ],
+  "expect": {
+    "error": {
+      "kind": "rejected",
+      "status": 400,
+      "code": "STRATA_CLOUD_API_VALIDATION_ERROR",
+      "attempts": 1
+    }
+  }
+}

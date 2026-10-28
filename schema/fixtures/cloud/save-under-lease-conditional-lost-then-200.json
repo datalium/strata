@@ -1,0 +1,68 @@
+{
+  "description": "A conditional save under a lease whose first answer is lost: Cloud records the token per checkpoint, so the retry that finds our own checkpoint at the head is the 200. Saved, with no look-up.",
+  "operation": "save_under_lease",
+  "checkpoint": "../checkpoint-lifecycle/running.json",
+  "lease": {
+    "thread_id": "thread_running_demo",
+    "owner": "worker-1",
+    "token": 3,
+    "expires_at": "2026-10-20T12:00:30.123Z"
+  },
+  "expected_sequence": 4,
+  "exchanges": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/sdk/checkpoints",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer {api_key}",
+          "accept": "application/json",
+          "content-type": "application/json",
+          "strata-lease-token": "3",
+          "strata-if-sequence": "4"
+        },
+        "absent_headers": [
+          "content-encoding"
+        ],
+        "body": "checkpoint"
+      },
+      "response": {
+        "lost": true
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/sdk/checkpoints",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer {api_key}",
+          "accept": "application/json",
+          "content-type": "application/json",
+          "strata-lease-token": "3",
+          "strata-if-sequence": "4"
+        },
+        "absent_headers": [
+          "content-encoding"
+        ],
+        "body": "checkpoint"
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "thread_id": "thread_running_demo",
+          "sequence": 5,
+          "received_at": "2026-10-20T12:00:00Z"
+        }
+      }
+    }
+  ],
+  "expect": {
+    "leased_save": "saved",
+    "min_waits_ms": [
+      200
+    ]
+  }
+}

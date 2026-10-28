@@ -1,0 +1,413 @@
+{
+  "description": "The agent's shared cases (design/44-LLM-Integration.md, \"The agent's loop\"), replayed by rust/strata-ai/tests/agent_cases.rs and dotnet/tests/Datalium.Strata.Tests/AI/AgentCaseTests.cs. Not a wire format: it pins the loop, the refusal table, the tool names and the repairs across the two engines. Each case builds a registry from `tools` (in order) and gives the agent the subset of those without `\"subset\": false`. A tool `answers` with its text; `fails` with its `message` (with `transient`, a failure the tool marks worth retrying: a NodeException.Transient in .NET, a transient answer from the agent's fault classifier in Rust; without it, an unclassified failure); is `denied` by a middleware on the registry with that reason; `delay_ms` waits first; `expects` names a string argument it reads, and arguments without it are an argument parse failure, `argument '<name>' must be a string` as the generated dispatch says it (schema/fixtures/tools/argument-problems.json). `model` is the scripted model's turns in order: `text`, `tool_calls` (each `id`, `name` as the model sends it, and `arguments`, an object or raw text), or `fails` (an HTTP `status` and `message`); each answer reports 12 input and 5 output tokens. The agent's id is `investigator`; `options` takes their defaults when absent (max_turns 8, max_repairs 1, tool_concurrency 1, tool_failures fail_node, output text, no validation). `output` is `text` (a text agent) or `diagnosis` ({cause: string, confidence: number, evidence: [string]}); `validate` `confidence` refuses a confidence outside 0 to 1 with `confidence must be between 0 and 1`. The agent runs inside the one node `Investigate` of a graph run with an observer. `expect`: `declarations` the names the model sees; `tool_calls` every call in the model's order (name, call_id, result); `tool_results` what each tool turn sent back, in order (`content`, or `content_starts_with` where the engines' parsers word details differently); `repairs` the repair requests (`starts_with`); `events` the run's ModelCall* and ToolCall* events as `ModelCallStarted`, `ModelCallCompleted <Result>`, `ToolCallStarted <tool> <call id> <caller id>`, `ToolCallCompleted <tool> <call id> <Result>` (absent: not checked); then either `output`, `turns` and `usage` [input, output], or `failure` (`transient` and `message`) for the node.",
+  "cases": [
+    {
+      "name": "an answer without tool calls is the answer",
+      "tools": [{ "name": "k8s.pods", "answers": "{\"pods\":3}" }],
+      "model": [{ "text": "Roll back v42." }],
+      "expect": {
+        "declarations": ["k8s_pods"],
+        "tool_calls": [],
+        "tool_results": [],
+        "events": ["ModelCallStarted", "ModelCallCompleted Succeeded"],
+        "output": "Roll back v42.",
+        "turns": 1,
+        "usage": [12, 5]
+      }
+    },
+    {
+      "name": "a tool call is mapped back, dispatched with the agent's and the model's ids, and answered",
+      "options": { "output": "diagnosis" },
+      "tools": [{ "name": "k8s.pods", "answers": "{\"pods\":3}" }],
+      "model": [
+        { "tool_calls": [{ "id": "call-1", "name": "k8s_pods", "arguments": { "namespace": "shop" } }] },
+        { "text": "{\"cause\":\"a bad deploy\",\"confidence\":0.8,\"evidence\":[\"call-1\"]}" }
+      ],
+      "expect": {
+        "tool_calls": [{ "name": "k8s.pods", "call_id": "call-1", "result": "succeeded" }],
+        "tool_results": [[{ "call_id": "call-1", "content": "{\"pods\":3}" }]],
+        "events": [
+          "ModelCallStarted", "ModelCallCompleted Succeeded",
+          "ToolCallStarted k8s.pods call-1 investigator", "ToolCallCompleted k8s.pods call-1 Succeeded",
+          "ModelCallStarted", "ModelCallCompleted Succeeded"
+        ],
+        "output": { "cause": "a bad deploy", "confidence": 0.8, "evidence": ["call-1"] },
+        "turns": 2,
+        "usage": [24, 10]
+      }
+    },
+    {
+      "name": "a turn's calls go back in one tool message, in the model's order",
+      "tools": [
+        { "name": "k8s.pods", "answers": "pods" },
+        { "name": "k8s.logs", "answers": "logs" }
+      ],
+      "model": [
+        { "tool_calls": [
+          { "id": "b", "name": "k8s_logs", "arguments": {} },
+          { "id": "a", "name": "k8s_pods", "arguments": {} }
+        ] },
+        { "text": "done" }
+      ],
+      "expect": {
+        "tool_calls": [
+          { "name": "k8s.logs", "call_id": "b", "result": "succeeded" },
+          { "name": "k8s.pods", "call_id": "a", "result": "succeeded" }
+        ],
+        "tool_results": [[{ "call_id": "b", "content": "logs" }, { "call_id": "a", "content": "pods" }]],
+        "events": [
+          "ModelCallStarted", "ModelCallCompleted Succeeded",
+          "ToolCallStarted k8s.logs b investigator", "ToolCallCompleted k8s.logs b Succeeded",
+          "ToolCallStarted k8s.pods a investigator", "ToolCallCompleted k8s.pods a Succeeded",
+          "ModelCallStarted", "ModelCallCompleted Succeeded"
+        ],
+        "output": "done",
+        "turns": 2,
+        "usage": [24, 10]
+      }
+    },
+    {
+      "name": "colliding names are made unique in registration order and mapped back",
+      "tools": [
+        { "name": "k8s.pods", "answers": "dotted" },
+        { "name": "k8s_pods", "answers": "underscored" },
+        { "name": "k8s/pods", "answers": "slashed" }
+      ],
+      "model": [
+        { "tool_calls": [
+          { "id": "1", "name": "k8s_pods_2", "arguments": {} },
+          { "id": "2", "name": "k8s_pods_3", "arguments": {} },
+          { "id": "3", "name": "k8s_pods", "arguments": {} }
+        ] },
+        { "text": "done" }
+      ],
+      "expect": {
+        "declarations": ["k8s_pods", "k8s_pods_2", "k8s_pods_3"],
+        "tool_calls": [
+          { "name": "k8s_pods", "call_id": "1", "result": "succeeded" },
+          { "name": "k8s/pods", "call_id": "2", "result": "succeeded" },
+          { "name": "k8s.pods", "call_id": "3", "result": "succeeded" }
+        ],
+        "tool_results": [[
+          { "call_id": "1", "content": "underscored" },
+          { "call_id": "2", "content": "slashed" },
+          { "call_id": "3", "content": "dotted" }
+        ]],
+        "output": "done",
+        "turns": 2,
+        "usage": [24, 10]
+      }
+    },
+    {
+      "name": "a long name is cut to 64 characters",
+      "tools": [{ "name": "a.very.long.tool.name.that.goes.on.and.on.past.the.limit.providers.accept", "answers": "ok" }],
+      "model": [
+        { "tool_calls": [{ "id": "1", "name": "a_very_long_tool_name_that_goes_on_and_on_past_the_limit_provide", "arguments": {} }] },
+        { "text": "done" }
+      ],
+      "expect": {
+        "declarations": ["a_very_long_tool_name_that_goes_on_and_on_past_the_limit_provide"],
+        "tool_calls": [{ "name": "a.very.long.tool.name.that.goes.on.and.on.past.the.limit.providers.accept", "call_id": "1", "result": "succeeded" }],
+        "tool_results": [[{ "call_id": "1", "content": "ok" }]],
+        "output": "done",
+        "turns": 2,
+        "usage": [24, 10]
+      }
+    },
+    {
+      "name": "an unknown tool is refused back to the model as not found",
+      "tools": [{ "name": "k8s.pods", "answers": "pods" }],
+      "model": [
+        { "tool_calls": [{ "id": "1", "name": "k8s_nodes", "arguments": {} }] },
+        { "text": "done" }
+      ],
+      "expect": {
+        "tool_calls": [{ "name": "k8s_nodes", "call_id": "1", "result": "refused" }],
+        "tool_results": [[{ "call_id": "1", "content": "{\"error\":\"tool 'k8s_nodes' was not found\"}" }]],
+        "events": [
+          "ModelCallStarted", "ModelCallCompleted Succeeded",
+          "ToolCallStarted k8s_nodes 1 investigator", "ToolCallCompleted k8s_nodes 1 Refused",
+          "ModelCallStarted", "ModelCallCompleted Succeeded"
+        ],
+        "output": "done",
+        "turns": 2,
+        "usage": [24, 10]
+      }
+    },
+    {
+      "name": "a tool left out of the agent's subset is refused as not permitted",
+      "tools": [
+        { "name": "k8s.pods", "answers": "pods" },
+        { "name": "secret.read", "answers": "hunter2", "subset": false }
+      ],
+      "model": [
+        { "tool_calls": [{ "id": "1", "name": "secret.read", "arguments": {} }] },
+        { "text": "done" }
+      ],
+      "expect": {
+        "declarations": ["k8s_pods"],
+        "tool_calls": [{ "name": "secret.read", "call_id": "1", "result": "refused" }],
+        "tool_results": [[{ "call_id": "1", "content": "{\"error\":\"tool 'secret.read' is not permitted here\"}" }]],
+        "events": [
+          "ModelCallStarted", "ModelCallCompleted Succeeded",
+          "ToolCallStarted secret.read 1 investigator", "ToolCallCompleted secret.read 1 Refused",
+          "ModelCallStarted", "ModelCallCompleted Succeeded"
+        ],
+        "output": "done",
+        "turns": 2,
+        "usage": [24, 10]
+      }
+    },
+    {
+      "name": "a call a middleware denies goes back as denied",
+      "tools": [{ "name": "k8s.delete", "answers": "deleted", "denied": "deletes need an approval" }],
+      "model": [
+        { "tool_calls": [{ "id": "1", "name": "k8s_delete", "arguments": { "pod": "api-1" } }] },
+        { "text": "done" }
+      ],
+      "expect": {
+        "tool_calls": [{ "name": "k8s.delete", "call_id": "1", "result": "refused" }],
+        "tool_results": [[{ "call_id": "1", "content": "{\"error\":\"denied: deletes need an approval\"}" }]],
+        "events": [
+          "ModelCallStarted", "ModelCallCompleted Succeeded",
+          "ToolCallStarted k8s.delete 1 investigator", "ToolCallCompleted k8s.delete 1 Refused",
+          "ModelCallStarted", "ModelCallCompleted Succeeded"
+        ],
+        "output": "done",
+        "turns": 2,
+        "usage": [24, 10]
+      }
+    },
+    {
+      "name": "arguments that aren't a JSON object are refused without a dispatch",
+      "tools": [{ "name": "k8s.pods", "answers": "pods" }],
+      "model": [
+        { "tool_calls": [{ "id": "1", "name": "k8s_pods", "arguments": "{\"namespace\": \"shop\"" }] },
+        { "text": "done" }
+      ],
+      "expect": {
+        "tool_calls": [{ "name": "k8s.pods", "call_id": "1", "result": "refused" }],
+        "tool_results": [[{ "call_id": "1", "content": "{\"error\":\"the arguments for tool 'k8s_pods' aren't a JSON object\"}" }]],
+        "events": ["ModelCallStarted", "ModelCallCompleted Succeeded", "ModelCallStarted", "ModelCallCompleted Succeeded"],
+        "output": "done",
+        "turns": 2,
+        "usage": [24, 10]
+      }
+    },
+    {
+      "name": "arguments the tool can't read are refused back to the model",
+      "tools": [{ "name": "k8s.pods", "answers": "pods", "expects": "namespace" }],
+      "model": [
+        { "tool_calls": [{ "id": "1", "name": "k8s_pods", "arguments": { "namespace": 5 } }] },
+        { "tool_calls": [{ "id": "2", "name": "k8s_pods", "arguments": { "namespace": "shop" } }] },
+        { "text": "done" }
+      ],
+      "expect": {
+        "tool_calls": [
+          { "name": "k8s.pods", "call_id": "1", "result": "refused" },
+          { "name": "k8s.pods", "call_id": "2", "result": "succeeded" }
+        ],
+        "tool_results": [
+          [{ "call_id": "1", "content": "{\"error\":\"invalid arguments for tool 'k8s_pods': argument 'namespace' must be a string\"}" }],
+          [{ "call_id": "2", "content": "pods" }]
+        ],
+        "events": [
+          "ModelCallStarted", "ModelCallCompleted Succeeded",
+          "ToolCallStarted k8s.pods 1 investigator", "ToolCallCompleted k8s.pods 1 Failed",
+          "ModelCallStarted", "ModelCallCompleted Succeeded",
+          "ToolCallStarted k8s.pods 2 investigator", "ToolCallCompleted k8s.pods 2 Succeeded",
+          "ModelCallStarted", "ModelCallCompleted Succeeded"
+        ],
+        "output": "done",
+        "turns": 3,
+        "usage": [36, 15]
+      }
+    },
+    {
+      "name": "a tool's failure fails the node by default, fatally when nothing says otherwise",
+      "tools": [{ "name": "k8s.logs", "fails": { "message": "the log backend refused the query" } }],
+      "model": [
+        { "tool_calls": [{ "id": "1", "name": "k8s_logs", "arguments": {} }] },
+        { "text": "never asked" }
+      ],
+      "expect": {
+        "events": [
+          "ModelCallStarted", "ModelCallCompleted Succeeded",
+          "ToolCallStarted k8s.logs 1 investigator", "ToolCallCompleted k8s.logs 1 Failed"
+        ],
+        "failure": { "transient": false, "message": "tool 'k8s.logs' failed: the log backend refused the query" }
+      }
+    },
+    {
+      "name": "a tool's transient failure fails the node transiently",
+      "tools": [{ "name": "k8s.logs", "fails": { "message": "the log backend timed out", "transient": true } }],
+      "model": [
+        { "tool_calls": [{ "id": "1", "name": "k8s_logs", "arguments": {} }] },
+        { "text": "never asked" }
+      ],
+      "expect": {
+        "failure": { "transient": true, "message": "the log backend timed out" }
+      }
+    },
+    {
+      "name": "with return_to_model a tool's failure goes back to the model",
+      "options": { "tool_failures": "return_to_model" },
+      "tools": [
+        { "name": "k8s.logs", "fails": { "message": "the log backend refused the query" } },
+        { "name": "k8s.pods", "answers": "pods" }
+      ],
+      "model": [
+        { "tool_calls": [
+          { "id": "1", "name": "k8s_logs", "arguments": {} },
+          { "id": "2", "name": "k8s_pods", "arguments": {} }
+        ] },
+        { "text": "worked around it" }
+      ],
+      "expect": {
+        "tool_calls": [
+          { "name": "k8s.logs", "call_id": "1", "result": "failed" },
+          { "name": "k8s.pods", "call_id": "2", "result": "succeeded" }
+        ],
+        "tool_results": [[
+          { "call_id": "1", "content": "{\"error\":\"tool 'k8s_logs' failed: the log backend refused the query\"}" },
+          { "call_id": "2", "content": "pods" }
+        ]],
+        "output": "worked around it",
+        "turns": 2,
+        "usage": [24, 10]
+      }
+    },
+    {
+      "name": "a tool turn past max_turns fails the node transiently without running its calls",
+      "options": { "max_turns": 2 },
+      "tools": [{ "name": "k8s.pods", "answers": "pods" }],
+      "model": [
+        { "tool_calls": [{ "id": "1", "name": "k8s_pods", "arguments": {} }] },
+        { "tool_calls": [{ "id": "2", "name": "k8s_pods", "arguments": {} }] },
+        { "tool_calls": [{ "id": "3", "name": "k8s_pods", "arguments": {} }] }
+      ],
+      "expect": {
+        "events": [
+          "ModelCallStarted", "ModelCallCompleted Succeeded",
+          "ToolCallStarted k8s.pods 1 investigator", "ToolCallCompleted k8s.pods 1 Succeeded",
+          "ModelCallStarted", "ModelCallCompleted Succeeded",
+          "ToolCallStarted k8s.pods 2 investigator", "ToolCallCompleted k8s.pods 2 Succeeded",
+          "ModelCallStarted", "ModelCallCompleted Succeeded"
+        ],
+        "failure": { "transient": true, "message": "agent 'investigator' made 2 tool turns without answering" }
+      }
+    },
+    {
+      "name": "an answer that isn't JSON is repaired once",
+      "options": { "output": "diagnosis" },
+      "tools": [],
+      "model": [
+        { "text": "The cause is a bad deploy, I think." },
+        { "text": "{\"cause\":\"a bad deploy\",\"confidence\":0.6,\"evidence\":[]}" }
+      ],
+      "expect": {
+        "repairs": ["Your answer was not valid: it is not JSON that matches the schema ("],
+        "output": { "cause": "a bad deploy", "confidence": 0.6, "evidence": [] },
+        "turns": 2,
+        "usage": [24, 10]
+      }
+    },
+    {
+      "name": "an answer that fails validation is repaired with its problems",
+      "options": { "output": "diagnosis", "validate": "confidence" },
+      "tools": [],
+      "model": [
+        { "text": "{\"cause\":\"a bad deploy\",\"confidence\":1.5,\"evidence\":[]}" },
+        { "text": "```json\n{\"cause\":\"a bad deploy\",\"confidence\":0.9,\"evidence\":[\"deploy-42\"]}\n```" }
+      ],
+      "expect": {
+        "repairs": ["Your answer was not valid: confidence must be between 0 and 1. Answer again with one JSON object that matches the schema."],
+        "output": { "cause": "a bad deploy", "confidence": 0.9, "evidence": ["deploy-42"] },
+        "turns": 2,
+        "usage": [24, 10]
+      }
+    },
+    {
+      "name": "an answer still bad after max_repairs fails the node transiently",
+      "options": { "output": "diagnosis", "validate": "confidence" },
+      "tools": [],
+      "model": [
+        { "text": "{\"cause\":\"a bad deploy\",\"confidence\":1.5,\"evidence\":[]}" },
+        { "text": "{\"cause\":\"a bad deploy\",\"confidence\":-1,\"evidence\":[]}" }
+      ],
+      "expect": {
+        "repairs": ["Your answer was not valid: confidence must be between 0 and 1."],
+        "failure": { "transient": true, "message": "agent 'investigator' gave no valid answer: confidence must be between 0 and 1" }
+      }
+    },
+    {
+      "name": "repair turns don't count as tool turns",
+      "options": { "output": "diagnosis", "max_turns": 2 },
+      "tools": [{ "name": "k8s.pods", "answers": "pods" }],
+      "model": [
+        { "tool_calls": [{ "id": "1", "name": "k8s_pods", "arguments": {} }] },
+        { "text": "not JSON" },
+        { "tool_calls": [{ "id": "2", "name": "k8s_pods", "arguments": {} }] },
+        { "text": "{\"cause\":\"pods\",\"confidence\":0.5,\"evidence\":[\"1\",\"2\"]}" }
+      ],
+      "expect": {
+        "tool_calls": [
+          { "name": "k8s.pods", "call_id": "1", "result": "succeeded" },
+          { "name": "k8s.pods", "call_id": "2", "result": "succeeded" }
+        ],
+        "repairs": ["Your answer was not valid: "],
+        "output": { "cause": "pods", "confidence": 0.5, "evidence": ["1", "2"] },
+        "turns": 4,
+        "usage": [48, 20]
+      }
+    },
+    {
+      "name": "a model fault fails the node as the fault says",
+      "tools": [{ "name": "k8s.pods", "answers": "pods" }],
+      "model": [
+        { "tool_calls": [{ "id": "1", "name": "k8s_pods", "arguments": {} }] },
+        { "fails": { "status": 429, "message": "rate limited" } }
+      ],
+      "expect": {
+        "events": [
+          "ModelCallStarted", "ModelCallCompleted Succeeded",
+          "ToolCallStarted k8s.pods 1 investigator", "ToolCallCompleted k8s.pods 1 Succeeded",
+          "ModelCallStarted", "ModelCallCompleted Failed"
+        ],
+        "failure": { "transient": true, "message": "model call failed (429): rate limited" }
+      }
+    },
+    {
+      "name": "concurrent calls still go back in the model's order",
+      "options": { "tool_concurrency": 3 },
+      "tools": [
+        { "name": "slow", "answers": "slow", "delay_ms": 120 },
+        { "name": "medium", "answers": "medium", "delay_ms": 60 },
+        { "name": "fast", "answers": "fast" }
+      ],
+      "model": [
+        { "tool_calls": [
+          { "id": "1", "name": "slow", "arguments": {} },
+          { "id": "2", "name": "medium", "arguments": {} },
+          { "id": "3", "name": "fast", "arguments": {} }
+        ] },
+        { "text": "done" }
+      ],
+      "expect": {
+        "tool_calls": [
+          { "name": "slow", "call_id": "1", "result": "succeeded" },
+          { "name": "medium", "call_id": "2", "result": "succeeded" },
+          { "name": "fast", "call_id": "3", "result": "succeeded" }
+        ],
+        "tool_results": [[
+          { "call_id": "1", "content": "slow" },
+          { "call_id": "2", "content": "medium" },
+          { "call_id": "3", "content": "fast" }
+        ]],
+        "output": "done",
+        "turns": 2,
+        "usage": [24, 10]
+      }
+    }
+  ]
+}

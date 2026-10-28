@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.datalium.dev/strata/memory-record.schema.json",
+  "title": "Strata Memory Record",
+  "description": "One long-term memory (design/45-Long-Term-Memory.md): a record an application stores with an embedding and finds again by similarity, written and read through IMemoryStore / MemoryStore. Identified by (namespace, tenant, id). The stores keep their own columns (schema/fixtures/memory/); this is the record's JSON form, for fixtures and the CLI.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "namespace", "tenant", "id", "embedding", "metadata", "created_at", "updated_at"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "namespace": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The kind of memory (incidents, runbooks, facts). A search never crosses one. At most 256 bytes of UTF-8."
+    },
+    "tenant": {
+      "type": "string",
+      "description": "Whose memory it is; empty when the application has none. A search reads one tenant only. At most 256 bytes of UTF-8."
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique within (namespace, tenant). At most 256 bytes of UTF-8."
+    },
+    "embedding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model", "vector"],
+      "properties": {
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What made the vector, as free text compared exactly (the helper writes <provider>/<model>). Vectors of different models are never compared."
+        },
+        "vector": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "number" },
+          "description": "As many finite numbers as the store's dimensions, not all zero. Stored as float32."
+        }
+      }
+    },
+    "content": {
+      "type": ["object", "null"],
+      "description": "The application's payload, never searched."
+    },
+    "text": {
+      "type": ["string", "null"],
+      "description": "The text the vector was made from, kept so a namespace can be embedded again by another model. Never searched."
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "description": "String pairs a search and a listing can filter on by equality. Keys are non-empty, at most 128 bytes of UTF-8."
+    },
+    "created_at": {
+      "type": "string",
+      "description": "RFC 3339, UTC, whole seconds, from the store's clock when the record was first written. Kept by a replacing upsert."
+    },
+    "updated_at": {
+      "type": "string",
+      "description": "RFC 3339, UTC, whole seconds, from the store's clock at the latest upsert. What retention purges by."
+    }
+  }
+}

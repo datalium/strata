@@ -1,0 +1,8 @@
+{
+  "schema_version": "1.0.0",
+  "entry_point": "DoesNotExist",
+  "nodes": [
+    { "name": "A", "metadata": null }
+  ],
+  "edges": []
+}

@@ -1,0 +1,54 @@
+{
+  "schema_version": "1.1.0",
+  "entry_point": "Triage",
+  "nodes": [
+    { "name": "Triage", "metadata": { "agent": "triage" } },
+    {
+      "name": "Investigate",
+      "metadata": null,
+      "kind": "parallel_group",
+      "branches": [
+        { "name": "Kubernetes", "metadata": { "agent": "kubernetes-investigator" } },
+        { "name": "GitHub", "metadata": null }
+      ]
+    },
+    {
+      "name": "Remediate",
+      "metadata": null,
+      "kind": "subgraph",
+      "graph": {
+        "schema_version": "1.1.0",
+        "entry_point": "Plan",
+        "nodes": [
+          { "name": "Plan", "metadata": null },
+          {
+            "name": "Fix",
+            "metadata": null,
+            "kind": "subgraph",
+            "graph": {
+              "schema_version": "1.0.0",
+              "entry_point": "Apply",
+              "nodes": [
+                { "name": "Apply", "metadata": null },
+                { "name": "Verify", "metadata": null }
+              ],
+              "edges": [
+                { "from": "Apply", "to": "Verify", "guarded": false, "condition": null },
+                { "from": "Verify", "to": "Apply", "guarded": true, "condition": null }
+              ]
+            }
+          },
+          { "name": "Abort", "metadata": null }
+        ],
+        "edges": [
+          { "from": "Plan", "to": "Fix", "guarded": false, "condition": null },
+          { "from": "Plan", "to": "Abort", "guarded": true, "condition": "on_reject" }
+        ]
+      }
+    }
+  ],
+  "edges": [
+    { "from": "Triage", "to": "Investigate", "guarded": false, "condition": null },
+    { "from": "Investigate", "to": "Remediate", "guarded": false, "condition": null }
+  ]
+}

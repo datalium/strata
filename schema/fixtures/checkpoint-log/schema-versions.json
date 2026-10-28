@@ -1,0 +1,8 @@
+{
+  "description": "The strata_schema_version table (design/34-Storage-Hardening.md, \"Migrations\"): one row per component of a SQL database, with the version its tables are at. A store that has prepared a database leaves these rows. Version 1 of each component is the layout the stores brought every older database to before the table existed (the baseline); a later change is a numbered step, and bumps the number here. The checkpoints component's version 2 adds value offload's checkpoint_blobs table (design/41-Checkpoint-Efficiency.md, 'Wire format'). Both engines and the CLI read and write the same rows, and refuse a database whose version is higher than the one they know. The SQLite history stores, which the runtimes don't share, record nothing.",
+  "table": "strata_schema_version",
+  "components": {
+    "checkpoints": 2,
+    "history": 1
+  }
+}

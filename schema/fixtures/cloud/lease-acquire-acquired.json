@@ -1,0 +1,57 @@
+{
+  "description": "An acquisition of a thread nobody holds: 200 with acquired true and the new lease. The call sends an Idempotency-Key.",
+  "operation": "acquire",
+  "thread_id": "thread_running_demo",
+  "owner": "worker-1",
+  "ttl_ms": 30000,
+  "exchanges": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/sdk/leases",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer {api_key}",
+          "accept": "application/json",
+          "content-type": "application/json"
+        },
+        "absent_headers": [
+          "strata-lease-token",
+          "content-encoding"
+        ],
+        "body": {
+          "thread_id": "thread_running_demo",
+          "owner": "worker-1",
+          "ttl_ms": 30000
+        },
+        "present_headers": [
+          "idempotency-key"
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store"
+        },
+        "body": {
+          "acquired": true,
+          "lease": {
+            "thread_id": "thread_running_demo",
+            "owner": "worker-1",
+            "token": 1,
+            "expires_at": "2026-10-20T12:00:30.123Z"
+          }
+        }
+      }
+    }
+  ],
+  "expect": {
+    "acquired": true,
+    "lease": {
+      "thread_id": "thread_running_demo",
+      "owner": "worker-1",
+      "token": 1,
+      "expires_at": "2026-10-20T12:00:30.123Z"
+    }
+  }
+}

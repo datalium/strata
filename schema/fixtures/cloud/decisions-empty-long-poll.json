@@ -1,0 +1,44 @@
+{
+  "description": "A long-poll for one thread that timed out on Cloud's side: the empty page, the normal quiet answer.",
+  "operation": "decisions",
+  "query": {
+    "thread_id": "inc-1042",
+    "limit": null,
+    "cursor": null,
+    "wait_seconds": 25
+  },
+  "exchanges": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1/sdk/decisions",
+        "query": {
+          "thread_id": "inc-1042",
+          "wait": "25"
+        },
+        "headers": {
+          "authorization": "Bearer {api_key}",
+          "accept": "application/json"
+        },
+        "absent_headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store"
+        },
+        "body": {
+          "items": [],
+          "next_cursor": null
+        }
+      }
+    }
+  ],
+  "expect": {
+    "page": {
+      "items": [],
+      "next_cursor": null
+    }
+  }
+}

@@ -1,0 +1,64 @@
+{
+  "schema_version": "1.2.0",
+  "entry_point": "Specialists",
+  "nodes": [
+    {
+      "name": "Specialists",
+      "metadata": null,
+      "kind": "parallel_group",
+      "branches": [
+        { "name": "telemetry", "metadata": null },
+        { "name": "kubernetes", "metadata": null },
+        { "name": "database", "metadata": null }
+      ],
+      "join": { "policy": "all", "count": null, "condition": null, "partial": "keep_succeeded" }
+    },
+    {
+      "name": "Race",
+      "metadata": null,
+      "kind": "parallel_group",
+      "branches": [
+        { "name": "openai", "metadata": null },
+        { "name": "anthropic", "metadata": null },
+        { "name": "local", "metadata": null }
+      ],
+      "join": { "policy": "first_matching", "count": null, "condition": "validated, confidence >= 0.9", "partial": "keep_succeeded" }
+    },
+    {
+      "name": "Fastest",
+      "metadata": null,
+      "kind": "parallel_group",
+      "branches": [
+        { "name": "primary", "metadata": null },
+        { "name": "secondary", "metadata": null }
+      ],
+      "join": { "policy": "first_success", "count": null, "condition": null, "partial": "fail_group" }
+    },
+    {
+      "name": "Majority",
+      "metadata": null,
+      "kind": "parallel_group",
+      "branches": [
+        { "name": "openai", "metadata": null },
+        { "name": "anthropic", "metadata": null },
+        { "name": "local", "metadata": null }
+      ],
+      "join": { "policy": "quorum", "count": 2, "condition": null, "partial": "fail_group" }
+    },
+    {
+      "name": "Plain",
+      "metadata": null,
+      "kind": "parallel_group",
+      "branches": [
+        { "name": "a", "metadata": null },
+        { "name": "b", "metadata": null }
+      ]
+    }
+  ],
+  "edges": [
+    { "from": "Specialists", "to": "Race", "guarded": false, "condition": null },
+    { "from": "Race", "to": "Fastest", "guarded": false, "condition": null },
+    { "from": "Fastest", "to": "Majority", "guarded": false, "condition": null },
+    { "from": "Majority", "to": "Plain", "guarded": false, "condition": null }
+  ]
+}

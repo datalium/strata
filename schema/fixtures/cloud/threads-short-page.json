@@ -1,0 +1,82 @@
+{
+  "description": "A metadata filter's page that is short while more follow (Cloud looks at 5,000 threads a request): one row of three, with a cursor. The page is returned as it came; only a null cursor ends a listing.",
+  "operation": "list",
+  "query": {
+    "metadata": {
+      "tenant": "acme"
+    },
+    "limit": 3
+  },
+  "exchanges": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1/sdk/threads",
+        "query": {
+          "meta.tenant": "acme",
+          "limit": "3"
+        },
+        "headers": {
+          "authorization": "Bearer {api_key}",
+          "accept": "application/json"
+        },
+        "absent_headers": [
+          "content-type"
+        ],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "threads": [
+            {
+              "thread_id": "resumed-acme",
+              "sequence": 1,
+              "state": "resumed",
+              "status": "interrupted",
+              "suspended_node": "Approve",
+              "next_node": "Execute",
+              "waiting_at": [
+                "Approve"
+              ],
+              "metadata": {
+                "tenant": "acme"
+              },
+              "updated_at": "2026-10-01T11:00:00Z",
+              "schema_version": "1.0.0",
+              "wait": null,
+              "graph": null
+            }
+          ],
+          "next_cursor": "c2Nhbm5lZDo1MDAw"
+        }
+      }
+    }
+  ],
+  "expect": {
+    "page": {
+      "threads": [
+        {
+          "thread_id": "resumed-acme",
+          "sequence": 1,
+          "state": "resumed",
+          "status": "interrupted",
+          "suspended_node": "Approve",
+          "next_node": "Execute",
+          "waiting_at": [
+            "Approve"
+          ],
+          "metadata": {
+            "tenant": "acme"
+          },
+          "updated_at": "2026-10-01T11:00:00Z",
+          "schema_version": "1.0.0",
+          "wait": null,
+          "graph": null
+        }
+      ],
+      "next_cursor": "c2Nhbm5lZDo1MDAw"
+    }
+  }
+}

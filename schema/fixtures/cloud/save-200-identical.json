@@ -1,0 +1,36 @@
+{
+  "description": "Cloud's idempotent answer: the checkpoint is already the thread's latest, nothing was appended.",
+  "operation": "save",
+  "checkpoint": "../checkpoint-lifecycle/frozen.json",
+  "exchanges": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/sdk/checkpoints",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer {api_key}",
+          "accept": "application/json",
+          "content-type": "application/json"
+        },
+        "absent_headers": [
+          "strata-if-sequence",
+          "content-encoding"
+        ],
+        "body": "checkpoint"
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "thread_id": "thread_hitl_demo",
+          "sequence": 3,
+          "received_at": "2026-10-09T12:00:00Z"
+        }
+      }
+    }
+  ],
+  "expect": {
+    "saved": true
+  }
+}

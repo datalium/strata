@@ -1,0 +1,43 @@
+{
+  "description": "A body over Cloud's limit: not retried.",
+  "operation": "save",
+  "checkpoint": "../checkpoint-lifecycle/frozen.json",
+  "exchanges": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/sdk/checkpoints",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer {api_key}",
+          "accept": "application/json",
+          "content-type": "application/json"
+        },
+        "absent_headers": [
+          "strata-if-sequence",
+          "content-encoding"
+        ],
+        "body": "checkpoint"
+      },
+      "response": {
+        "status": 413,
+        "headers": {},
+        "body": {
+          "status": "FAILED",
+          "code": "STRATA_CLOUD_API_PAYLOAD_TOO_LARGE",
+          "error": "Payload too large",
+          "timestamp": "2026-10-09T12:00:00.000Z",
+          "statusCode": 413
+        }
+      }
+    }
+  ],
+  "expect": {
+    "error": {
+      "kind": "rejected",
+      "status": 413,
+      "code": "STRATA_CLOUD_API_PAYLOAD_TOO_LARGE",
+      "attempts": 1
+    }
+  }
+}

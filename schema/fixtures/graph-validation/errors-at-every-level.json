@@ -1,0 +1,38 @@
+{
+  "schema_version": "1.1.0",
+  "entry_point": "A",
+  "nodes": [
+    { "name": "A", "metadata": null },
+    {
+      "name": "G",
+      "metadata": null,
+      "kind": "parallel_group",
+      "branches": [
+        { "name": "X", "metadata": null },
+        { "name": "X", "metadata": null }
+      ]
+    },
+    {
+      "name": "S",
+      "metadata": null,
+      "kind": "subgraph",
+      "graph": {
+        "schema_version": "1.1.0",
+        "entry_point": "P",
+        "nodes": [
+          { "name": "P", "metadata": null },
+          { "name": "H", "metadata": null, "kind": "parallel_group", "branches": [] },
+          { "name": "Q", "metadata": null }
+        ],
+        "edges": [
+          { "from": "P", "to": "H", "guarded": false, "condition": null }
+        ]
+      }
+    },
+    { "name": "Island", "metadata": null }
+  ],
+  "edges": [
+    { "from": "A", "to": "G", "guarded": false, "condition": null },
+    { "from": "G", "to": "S", "guarded": false, "condition": null }
+  ]
+}

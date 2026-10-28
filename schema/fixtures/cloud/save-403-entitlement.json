@@ -1,0 +1,43 @@
+{
+  "description": "The save would start a new thread and the plan's thread limit is reached: its own error, not retried.",
+  "operation": "save",
+  "checkpoint": "../checkpoint-lifecycle/frozen.json",
+  "exchanges": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/sdk/checkpoints",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer {api_key}",
+          "accept": "application/json",
+          "content-type": "application/json"
+        },
+        "absent_headers": [
+          "strata-if-sequence",
+          "content-encoding"
+        ],
+        "body": "checkpoint"
+      },
+      "response": {
+        "status": 403,
+        "headers": {},
+        "body": {
+          "status": "FAILED",
+          "code": "STRATA_CLOUD_API_ENTITLEMENT_EXCEEDED",
+          "error": "Thread limit reached for this month",
+          "timestamp": "2026-10-09T12:00:00.000Z",
+          "statusCode": 403
+        }
+      }
+    }
+  ],
+  "expect": {
+    "error": {
+      "kind": "entitlement_exceeded",
+      "status": 403,
+      "code": "STRATA_CLOUD_API_ENTITLEMENT_EXCEEDED",
+      "attempts": 1
+    }
+  }
+}

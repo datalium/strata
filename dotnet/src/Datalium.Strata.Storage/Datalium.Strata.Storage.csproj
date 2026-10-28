@@ -1,0 +1,33 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <Import Project="..\Package.props" />
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Description>Checkpoint and history stores for Datalium Strata: in-memory, SQLite, Postgres and Redis, with thread leases, retries and retention.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.0" />
+    <PackageReference Include="Npgsql" Version="10.0.3" />
+    <!-- Overrides the vulnerable 2.1.11 SQLitePCLRaw.* pulled in transitively by
+         Microsoft.EntityFrameworkCore.Sqlite 10.0.0 (NU1903, GHSA-2m69-gcr7-jv3q). -->
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" />
+    <PackageReference Include="StackExchange.Redis" Version="3.3.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- PrivateAssets without "analyzers": NuGet hides a dependency's analyzers from a package's own consumers
+         by default, and the engine's source generator has to reach them
+         (design/36-Packaging-And-Versioning.md). -->
+    <ProjectReference Include="..\Datalium.Strata\Datalium.Strata.csproj" PrivateAssets="contentfiles;build" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The stores' fault points and later schema steps, for the tests that drive them. -->
+    <InternalsVisibleTo Include="Datalium.Strata.Tests" />
+  </ItemGroup>
+
+</Project>

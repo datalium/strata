@@ -1,0 +1,40 @@
+{
+  "description": "A release: the thread and the token in the query string, no body.",
+  "operation": "release",
+  "lease": {
+    "thread_id": "thread_running_demo",
+    "owner": "worker-1",
+    "token": 3,
+    "expires_at": "2026-10-20T12:00:30.123Z"
+  },
+  "exchanges": [
+    {
+      "request": {
+        "method": "DELETE",
+        "path": "/v1/sdk/leases",
+        "query": {
+          "thread_id": "thread_running_demo",
+          "token": "3"
+        },
+        "headers": {
+          "authorization": "Bearer {api_key}",
+          "accept": "application/json"
+        },
+        "absent_headers": [
+          "content-type"
+        ],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "released": true
+        }
+      }
+    }
+  ],
+  "expect": {
+    "released": true
+  }
+}

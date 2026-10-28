@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0.0",
+  "thread_id": "thread_9b1a4c8e",
+  "status": "interrupted",
+  "suspended_node": "PrepareWireTransfer",
+  "next_node": "ExecuteWireTransfer",
+  "frozen_state": {
+    "invoice_generated": true,
+    "amount": 4200.5,
+    "currency": "USD"
+  },
+  "metadata": {
+    "approver_id": "admin_01",
+    "notes": "Approved after manual review of invoice total."
+  },
+  "created_at": "2026-09-15T18:32:04Z",
+  "resumed_at": null
+}
