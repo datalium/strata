@@ -20,7 +20,7 @@ datalium-strata = { path = "../rust/strata-core" }
 datalium-strata-memory = { path = "../rust/strata-memory" }
 ratatui = "0.29"
 serde_json = "1"
-tabled = "0.17"
+tabled = "0.22"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
 [dev-dependencies]
