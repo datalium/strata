@@ -1,2 +1,3 @@
 # Datalium Strata
-A type-safe, compiled, high-performance, and native agentic AI orchestration framework for Rust and .NET, built for high-concurrency production workloads.
+
+Datalium Strata is a type-safe, compiled, open-source, high-performance, and native agentic AI orchestration framework targeting the Rust and .NET/C# ecosystems, built for high-concurrency production workloads.
