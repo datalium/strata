@@ -8,7 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="coverlet.collector" Version="6.0.4" />
+    <PackageReference Include="coverlet.collector" Version="10.1.0" />
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.11.0" />
     <!-- The hosting tests build a real host and send its telemetry to an in-memory exporter. -->
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.12" />
