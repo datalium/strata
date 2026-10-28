@@ -1,0 +1,15 @@
+# Weekly dependency updates (strata-specs 23-publish-plan.md §5, Security).
+version: 2
+updates:
+    - package-ecosystem: cargo
+      directories: ['/rust', '/cli']
+      schedule:
+          interval: weekly
+    - package-ecosystem: nuget
+      directory: /dotnet
+      schedule:
+          interval: weekly
+    - package-ecosystem: github-actions
+      directory: /
+      schedule:
+          interval: weekly
