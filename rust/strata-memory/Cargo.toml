@@ -17,11 +17,11 @@ datalium-strata = { workspace = true }
 deadpool-postgres = { version = "0.14", default-features = false, features = ["rt_tokio_1"] }
 metrics = "0.24"
 redis = { version = "1.7.0", default-features = false, features = ["aio", "connection-manager", "script", "tokio-comp"] }
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.41", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha1_smol = "1"
-sha2 = "0.10"
+sha2 = "0.11"
 # sqlite-vec's C source, compiled in with SQLITE_CORE against rusqlite's bundled
 # SQLite: the SQLite memory store's vec_distance_cosine (design/45).
 sqlite-vec = "0.1.9"
