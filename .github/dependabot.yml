@@ -3,12 +3,23 @@
 # launch; security updates are not affected by either setting.
 version: 2
 updates:
+    # One entry per Cargo workspace: a group spanning both fails, since /cli uses /rust by path.
     - package-ecosystem: cargo
-      directories: ['/rust', '/cli']
+      directory: /rust
       schedule:
           interval: weekly
       groups:
-          cargo:
+          cargo-rust:
+              patterns: ['*']
+      ignore:
+          - dependency-name: '*'
+            update-types: ['version-update:semver-major']
+    - package-ecosystem: cargo
+      directory: /cli
+      schedule:
+          interval: weekly
+      groups:
+          cargo-cli:
               patterns: ['*']
       ignore:
           - dependency-name: '*'
