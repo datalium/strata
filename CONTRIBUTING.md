@@ -7,7 +7,7 @@ Strata is a preview (see the [README](README.md#why-strata-is-a-preview)). The A
 ## What you need
 
 - The **.NET 10 SDK**.
-- **Rust** 1.85 or later, with `rustfmt` and `clippy` (`rustup component add rustfmt clippy`).
+- **Rust** 1.88 or later, with `rustfmt` and `clippy` (`rustup component add rustfmt clippy`).
 - **Docker**, only if you want to run the Postgres and Redis store tests.
 
 ## Build and test

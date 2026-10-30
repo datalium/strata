@@ -33,7 +33,7 @@ dotnet add package Datalium.Strata.Hosting --version 0.9.0-preview.1
 
 `Datalium.Strata.Hosting` brings the engine, the stores, the Strata Cloud client and the AI package.
 
-**Rust** (1.85 or later, with tokio):
+**Rust** (1.88 or later, with tokio):
 
 ```bash
 cargo add datalium-strata@0.9.0-preview.1 datalium-strata-memory@0.9.0-preview.1
