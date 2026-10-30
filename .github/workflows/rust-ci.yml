@@ -164,8 +164,9 @@ jobs:
     # the six crates to crates.io and then creates the GitHub release with the CLI. Crates first, so a
     # failed publish leaves no public release.
     #
-    # Ownership comes from CRATES_IO_TOKEN, created by the Datalium release account. It lives only in the
-    # "release" environment.
+    # Trusted publishing: crates.io trusts this workflow (rust-ci.yml) in the "release" environment of
+    # datalium/strata, and swaps the job's OIDC token for a short-lived publish token. There is no stored
+    # token. The crates stay owned by the Datalium release account and the datalium/strata team.
     publish-rust:
         name: Publish to Crates.io & GitHub Releases
         needs: build-cli-artifacts
@@ -174,16 +175,23 @@ jobs:
         environment: release
         permissions:
             contents: write # creates the GitHub release
+            id-token: write # lets the job ask GitHub for the OIDC token crates.io swaps for a publish token
         steps:
             - uses: actions/checkout@v4
 
             - name: Setup Rust Toolchain
               uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
 
+            # The token lasts 30 minutes and is revoked when the job ends. Trusted publishing works only for
+            # crates that already exist: the first version of a new crate is published by hand, by the
+            # release account, and its trusted publisher added before the next tag.
+            - name: Log In to Crates.io
+              id: crates-io
+              uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
+
             # In dependency order: each crate depends on the ones before it at exactly this version.
             #
-            # crates.io limits how fast new crate names can be published (at the time of writing, a burst
-            # of 5, then about one every 10 minutes), so the sixth new crate may get HTTP 429. A 429 waits
+            # crates.io limits how fast crates can be published, so a publish may get HTTP 429. A 429 waits
             # and tries again. A crate already on crates.io at this version is skipped, so the job can be
             # re-run after a partial publish.
             #
@@ -193,7 +201,7 @@ jobs:
               shell: bash
               working-directory: rust
               env:
-                  CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+                  CARGO_REGISTRY_TOKEN: ${{ steps.crates-io.outputs.token }}
               run: |
                   publish() {
                       local crate="$1" attempt
@@ -206,8 +214,8 @@ jobs:
                               return 0
                           fi
                           if grep -q -i -E '429|too many' "$RUNNER_TEMP/publish.log" && [ "$attempt" -lt 4 ]; then
-                              echo "::warning::crates.io rate limit on $crate (attempt $attempt). Trying again in 11 minutes."
-                              sleep 660
+                              echo "::warning::crates.io rate limit on $crate (attempt $attempt). Trying again in 2 minutes."
+                              sleep 120 # well inside the token's 30 minutes
                               continue
                           fi
                           echo "::error::cargo publish failed for $crate."
