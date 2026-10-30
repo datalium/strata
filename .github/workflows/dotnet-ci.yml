@@ -112,25 +112,18 @@ jobs:
             - name: Pack and Smoke-Test the Packages
               run: .github/scripts/pack-smoke.sh
 
-            # Trusted publishing: swaps the OIDC token for a short-lived, single-use nuget.org key.
-            # Launch only: if the login fails, the push falls back to the backup key and the run says so.
-            # After launch, remove continue-on-error, the warning step and the fallback, so a failed login
-            # fails the release.
+            # Trusted publishing: swaps the OIDC token for a short-lived, single-use nuget.org key. It's the
+            # only way to publish: there is no stored API key, so a failed login fails the release.
             - name: Log In to NuGet.org
               id: login
               uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
-              continue-on-error: true
               with:
                   user: ${{ secrets.NUGET_USER }}
-
-            - name: Warn If the Backup Key Is Used
-              if: ${{ steps.login.outcome != 'success' }}
-              run: echo "::warning::Trusted publishing login failed. Pushing with the backup NUGET_API_KEY."
 
             # The symbol packages (.snupkg) next to the packages go up with them.
             - name: Push Packages to NuGet.org
               run: >-
                   dotnet nuget push "dotnet/artifacts/packages/*.nupkg"
                   --source https://api.nuget.org/v3/index.json
-                  --api-key ${{ steps.login.outputs.NUGET_API_KEY || secrets.NUGET_API_KEY }}
+                  --api-key ${{ steps.login.outputs.NUGET_API_KEY }}
                   --skip-duplicate
