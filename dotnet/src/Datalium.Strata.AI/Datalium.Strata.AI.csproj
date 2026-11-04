@@ -14,8 +14,9 @@
        Microsoft.Extensions.AI's abstractions (any IChatClient works unchanged), System.ClientModel (the OpenAI and
        Azure SDKs' fault type, which the default classifier reads), and the engine: nothing else. -->
   <ItemGroup>
-    <PackageReference Include="Microsoft.Extensions.AI.Abstractions" Version="10.10.1" />
-    <PackageReference Include="System.ClientModel" Version="1.15.0" />
+    <PackageReference Include="Microsoft.Extensions.AI.Abstractions" Version="10.11.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.14" />
+    <PackageReference Include="System.ClientModel" Version="1.16.0" />
   </ItemGroup>
 
   <ItemGroup>
