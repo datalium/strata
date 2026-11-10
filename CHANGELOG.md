@@ -6,6 +6,41 @@ Every NuGet package, every crate and the `strata` CLI share one version and are 
 
 Each entry ends with the wire formats that version writes and reads. The rules behind them are in `schema/README.md`, "Compatibility".
 
+## 0.9.0-preview.2 (2026-11-10)
+
+A maintenance release. The API and the behaviour are the same as in `0.9.0-preview.1`.
+
+### Upgrading
+
+Change the version, and nothing else:
+
+- **.NET:** `dotnet add package Datalium.Strata.Hosting --version 0.9.0-preview.2`, or the same version on every `Datalium.Strata.*` reference.
+- **Rust:** `=0.9.0-preview.2` on every `datalium-strata*` crate. The crates pin each other exactly, so they move together.
+- **CLI:** download the binary from the `v0.9.0-preview.2` release.
+
+### Changes
+
+- **The minimum Rust version is in the manifests: 1.88.** Every crate and the CLI now declare `rust-version = "1.88"`. `0.9.0-preview.1` said 1.85 in the README, but it needed 1.88, because `redis` 1.7 declares it. Now Cargo on an older toolchain says which version it needs, instead of failing inside a dependency. Cargo 1.84 or later, with resolver 3 (the default for edition 2024), also picks dependency versions that build on your toolchain. Built and checked on 1.88.
+- **.NET dependencies updated** (minor and patch versions only). An application that references Strata now gets at least these versions:
+
+  | Package | Dependency | From | To |
+  |:--|:--|:--|:--|
+  | `Datalium.Strata.AI` | `Microsoft.Extensions.AI.Abstractions` | 10.10.1 | 10.11.0 |
+  | | `Microsoft.Extensions.Logging.Abstractions` | (transitive) | 10.0.14, now direct |
+  | | `System.ClientModel` | 1.15.0 | 1.16.0 |
+  | `Datalium.Strata.Hosting` | `Microsoft.Extensions.Configuration.Binder`, `Diagnostics.HealthChecks`, `Hosting.Abstractions`, `Options.ConfigurationExtensions` | 10.0.12 | 10.0.14 |
+  | | `OpenTelemetry.Api.ProviderBuilderExtensions` | 1.19.1 | 1.20.1 |
+  | `Datalium.Strata.Storage` | `Microsoft.EntityFrameworkCore.Sqlite` | 10.0.0 | 10.0.14 |
+  | | `StackExchange.Redis` | 3.3.0 | 3.4.31 |
+
+  The source generator inside `Datalium.Strata` now builds against Roslyn 4.14 (was 4.11). The .NET 10 SDK's compiler is newer, so nothing changes for you.
+- **CLI dependencies updated:** `redis` 1.8.1, `tokio` 1.54.1, `serde_json` 1.0.154.
+- **Releases publish only through trusted publishing**, on nuget.org and on crates.io. No registry key or token is stored anywhere.
+
+### Wire formats
+
+Unchanged from `0.9.0-preview.1`: see its table below.
+
 ## 0.9.0-preview.1 (2026-10-28)
 
 The first version with a number, and the first one published: on nuget.org, on crates.io and as a GitHub release with the `strata` CLI. Before it, applications pinned a commit of this repository.

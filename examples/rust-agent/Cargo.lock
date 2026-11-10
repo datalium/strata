@@ -243,7 +243,7 @@ dependencies = [
 
 [[package]]
 name = "datalium-strata"
-version = "0.9.0-preview.1"
+version = "0.9.0-preview.2"
 dependencies = [
  "base64",
  "chrono",
@@ -260,7 +260,7 @@ dependencies = [
 
 [[package]]
 name = "datalium-strata-macros"
-version = "0.9.0-preview.1"
+version = "0.9.0-preview.2"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -269,7 +269,7 @@ dependencies = [
 
 [[package]]
 name = "datalium-strata-memory"
-version = "0.9.0-preview.1"
+version = "0.9.0-preview.2"
 dependencies = [
  "chrono",
  "datalium-strata",

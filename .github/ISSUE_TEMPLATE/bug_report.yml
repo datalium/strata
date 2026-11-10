@@ -14,7 +14,7 @@ body:
       attributes:
           label: Strata version
           description: The package, crate or CLI version (`strata --version`).
-          placeholder: 0.9.0-preview.1
+          placeholder: 0.9.0-preview.2
       validations:
           required: true
 

@@ -5,8 +5,9 @@ resolver = "2"
 # design/36-Packaging-And-Versioning.md: one version for every crate, the .NET packages and the CLI.
 # .github/scripts/versions.sh checks that it equals dotnet/Directory.Build.props's and cli/Cargo.toml's.
 [workspace.package]
-version = "0.9.0-preview.1"
+version = "0.9.0-preview.2"
 edition = "2024"
+rust-version = "1.88"
 authors = ["Datalium <strata@datalium.com>"]
 license = "Apache-2.0"
 repository = "https://github.com/datalium/strata"
@@ -18,9 +19,9 @@ categories = ["asynchronous"]
 # The crates depend on each other at exactly this version: they are released together, and crates.io
 # refuses a path dependency that has no version.
 [workspace.dependencies]
-datalium-strata = { path = "strata-core", version = "=0.9.0-preview.1" }
-datalium-strata-macros = { path = "strata-macros", version = "=0.9.0-preview.1" }
-datalium-strata-memory = { path = "strata-memory", version = "=0.9.0-preview.1" }
-datalium-strata-cloud = { path = "strata-cloud", version = "=0.9.0-preview.1" }
-datalium-strata-host = { path = "strata-host", version = "=0.9.0-preview.1" }
-datalium-strata-ai = { path = "strata-ai", version = "=0.9.0-preview.1" }
+datalium-strata = { path = "strata-core", version = "=0.9.0-preview.2" }
+datalium-strata-macros = { path = "strata-macros", version = "=0.9.0-preview.2" }
+datalium-strata-memory = { path = "strata-memory", version = "=0.9.0-preview.2" }
+datalium-strata-cloud = { path = "strata-cloud", version = "=0.9.0-preview.2" }
+datalium-strata-host = { path = "strata-host", version = "=0.9.0-preview.2" }
+datalium-strata-ai = { path = "strata-ai", version = "=0.9.0-preview.2" }

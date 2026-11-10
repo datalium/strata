@@ -1,8 +1,9 @@
 [package]
 name = "cli"
 # Strata's version (design/36-Packaging-And-Versioning.md); .github/scripts/versions.sh checks it.
-version = "0.9.0-preview.1"
+version = "0.9.0-preview.2"
 edition = "2024"
+rust-version = "1.88"
 description = "The strata command line: validate and view graph definitions, list and inspect threads, read checkpoint logs"
 license = "Apache-2.0"
 repository = "https://github.com/datalium/strata"
