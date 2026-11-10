@@ -3,6 +3,7 @@ name = "datalium-strata"
 description = "The Datalium Strata engine: typed state graphs for AI agents with compile-time validation, streaming, human-in-the-loop interrupts and durable execution"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true

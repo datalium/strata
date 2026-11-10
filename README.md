@@ -7,7 +7,7 @@
 
 Datalium Strata is a type-safe, compiled, open-source, high-performance, and native agentic AI orchestration framework targeting the Rust and .NET/C# ecosystems, built for high-concurrency production workloads.
 
-Strata is in **public preview**. The current version is `0.9.0-preview.1`. Read [Why Strata is a preview](#why-strata-is-a-preview) and the [Known limitations](https://stratamesh.dev/reference/known-limitations/) before you build on it.
+Strata is in **public preview**. The current version is `0.9.0-preview.2`. Read [Why Strata is a preview](#why-strata-is-a-preview) and the [Known limitations](https://stratamesh.dev/reference/known-limitations/) before you build on it.
 
 **Documentation:** [stratamesh.dev](https://stratamesh.dev) · **Quickstart:** [stratamesh.dev/start-here/quickstart](https://stratamesh.dev/start-here/quickstart/)
 
@@ -28,7 +28,7 @@ Performance: method, hardware and raw data are in [benchmarks/RESULTS.md](benchm
 **.NET** (.NET 10). Previews aren't picked by default, so give the version:
 
 ```bash
-dotnet add package Datalium.Strata.Hosting --version 0.9.0-preview.1
+dotnet add package Datalium.Strata.Hosting --version 0.9.0-preview.2
 ```
 
 `Datalium.Strata.Hosting` brings the engine, the stores, the Strata Cloud client and the AI package.
@@ -36,7 +36,7 @@ dotnet add package Datalium.Strata.Hosting --version 0.9.0-preview.1
 **Rust** (1.88 or later, with tokio):
 
 ```bash
-cargo add datalium-strata@0.9.0-preview.1 datalium-strata-memory@0.9.0-preview.1
+cargo add datalium-strata@0.9.0-preview.2 datalium-strata-memory@0.9.0-preview.2
 ```
 
 **The `strata` CLI:** download the binary for your platform from the [latest release](https://github.com/datalium/strata/releases) (`strata-linux-x64`, `strata-macos-x64` or `strata-windows-x64.exe`) and check it against `SHA256SUMS.txt`. There is no ARM64 build yet.

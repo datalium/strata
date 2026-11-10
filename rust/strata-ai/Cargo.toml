@@ -3,6 +3,7 @@ name = "datalium-strata-ai"
 description = "Model calls and agents for Datalium Strata: a chat-client trait, OpenAI-compatible and Anthropic clients, streamed, observed and retried from a node, and the model-tool loop with typed answers"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true

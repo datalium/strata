@@ -3,6 +3,7 @@ name = "datalium-strata-memory"
 description = "In-memory, SQLite, Postgres and Redis persistence adapters for Datalium Strata"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true

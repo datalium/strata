@@ -4,7 +4,7 @@
        .github/scripts/versions.sh checks that it equals rust/Cargo.toml's and cli/Cargo.toml's, and that a
        release tag is "v" followed by it. -->
   <PropertyGroup>
-    <Version>0.9.0-preview.1</Version>
+    <Version>0.9.0-preview.2</Version>
     <Authors>Datalium</Authors>
     <Company>Datalium</Company>
     <Copyright>Copyright (c) Datalium</Copyright>

@@ -3,6 +3,7 @@ name = "datalium-strata-host"
 description = "Driver loops, settings and a store health probe for hosting Datalium Strata in a service"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
