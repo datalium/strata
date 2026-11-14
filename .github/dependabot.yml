@@ -1,4 +1,4 @@
-# Weekly dependency updates (strata-specs 23-publish-plan.md §5, Security).
+# Weekly dependency updates.
 # One grouped PR per ecosystem. Major versions are skipped until after the 0.9.0-preview.1
 # launch; security updates are not affected by either setting.
 version: 2
