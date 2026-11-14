@@ -6,6 +6,14 @@ Every NuGet package, every crate and the `strata` CLI share one version and are 
 
 Each entry ends with the wire formats that version writes and reads. The rules behind them are in `schema/README.md`, "Compatibility".
 
+## Unreleased
+
+### Changes
+
+- **Rust: `StrataCloudOptions::with_client` takes a `reqwest` 0.13 client.** `datalium-strata-ai` and `datalium-strata-cloud` moved from `reqwest` 0.12 to 0.13. If you pass your own client to `with_client`, build it with `reqwest` 0.13. A 0.12 client no longer compiles. Nothing else in the API changed.
+- **Rust: HTTPS trusts the operating system's certificates.** The clients that `datalium-strata-ai` and `datalium-strata-cloud` build used to trust a bundled copy of the Mozilla root certificates, with `ring` for the cryptography. They now use the operating system's certificate store (`rustls-platform-verifier`) and `aws-lc-rs`, the defaults of `reqwest` 0.13's `rustls` feature. A certificate your system trusts, such as a company proxy's, now works without extra setup.
+- **Rust dependencies updated:** `base64` 0.23, `sha2` 0.11, `syn` 3 (in `datalium-strata-macros`) and `rusqlite` 0.40 (in `datalium-strata-memory`, and in the CLI's tests). `rusqlite` stays below 0.41, which needs Rust 1.89. The minimum Rust version is still 1.88.
+
 ## 0.9.0-preview.2 (2026-11-10)
 
 A maintenance release. The API and the behaviour are the same as in `0.9.0-preview.1`.

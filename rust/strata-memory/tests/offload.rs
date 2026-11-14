@@ -40,6 +40,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
+/// The `sha256:<hex>` name of a blob: sha2 0.11 digests no longer format with `{:x}`.
+fn sha256_name(content: &[u8]) -> String {
+    let hex: String = Sha256::digest(content)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    format!("sha256:{hex}")
+}
+
 const WHOLE: &str = "1.7.0";
 const DELTA: &str = "1.8.0";
 const OFFLOADED: &str = "1.9.0";
@@ -547,11 +556,7 @@ async fn shared_rows(backend: Backend, blobs: Blobs) {
     let rows = fixture["rows"].as_array().unwrap();
     for (hash, content) in fixture["blobs"].as_object().unwrap() {
         let content = content.as_str().unwrap().as_bytes();
-        assert_eq!(
-            hash,
-            &format!("sha256:{:x}", Sha256::digest(content)),
-            "the fixture's own hash"
-        );
+        assert_eq!(hash, &sha256_name(content), "the fixture's own hash");
         match &blobs {
             Blobs::Own => {
                 // A store opened first, so the SQL tables exist.
@@ -683,7 +688,7 @@ async fn offloaded_once(backend: Backend, blobs: Blobs) {
     let stored = blobs_of(&backend, &blobs, "t").await;
     assert_eq!(stored.len(), 2);
     for (hash, content) in &stored {
-        assert_eq!(hash, &format!("sha256:{:x}", Sha256::digest(content)));
+        assert_eq!(hash, &sha256_name(content));
     }
     assert_eq!(log(&*store, "t").await, saved);
     let reader = backend
