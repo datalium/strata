@@ -14,6 +14,9 @@ updates:
       ignore:
           - dependency-name: '*'
             update-types: ['version-update:semver-major']
+          # rusqlite 0.41 and later need Rust 1.89; the crates declare 1.88. Remove when that rises.
+          - dependency-name: 'rusqlite'
+            versions: ['>= 0.41']
     - package-ecosystem: cargo
       directory: /cli
       schedule:
@@ -24,6 +27,9 @@ updates:
       ignore:
           - dependency-name: '*'
             update-types: ['version-update:semver-major']
+          # rusqlite 0.41 and later need Rust 1.89; the crates declare 1.88. Remove when that rises.
+          - dependency-name: 'rusqlite'
+            versions: ['>= 0.41']
     - package-ecosystem: nuget
       directory: /dotnet
       schedule:
