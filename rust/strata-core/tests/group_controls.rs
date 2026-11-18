@@ -492,6 +492,80 @@ async fn without_sibling_cancellation_every_branch_finishes_before_the_group_fai
     assert!(!token.lock().unwrap().as_ref().unwrap().is_cancelled());
 }
 
+/// Never finishes, and ignores its token: the group has to give up on it by
+/// itself (`design/49-Burst-Throughput.md`).
+fn stuck() -> Handler {
+    Box::new(|_job, _ctx| Box::pin(std::future::pending()))
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_branch_that_ignores_its_token_still_times_out() {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let graph = group(
+        branches(vec![
+            ("telemetry", succeeds("telemetry")),
+            ("kubernetes", stuck()),
+        ]),
+        ParallelGroupOptions::new()
+            .with_branch_timeout(Duration::from_secs(45))
+            .keep_succeeded(),
+        seen.clone(),
+    );
+
+    let (result, events) = run(&graph, Arc::default()).await;
+
+    assert_eq!(completed(result).trail, ["telemetry"]);
+    assert_eq!(
+        seen.lock().unwrap()[0].get("kubernetes").unwrap().status,
+        BranchStatus::TimedOut
+    );
+    assert_eq!(
+        branch_ends(&events),
+        [
+            (
+                "Investigate/kubernetes".to_string(),
+                BranchResult::Failed,
+                Some(BranchEndReason::TimedOut)
+            ),
+            (
+                "Investigate/telemetry".to_string(),
+                BranchResult::Succeeded,
+                None
+            ),
+        ]
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_branch_that_ignores_its_token_is_given_up_on_when_a_sibling_fails() {
+    let graph = StateGraph::<Job>::new()
+        .add_parallel_group(
+            "Investigate",
+            branches(vec![
+                ("a", fails(NodeError::Fatal("bad query".to_string()))),
+                ("b", stuck()),
+            ]),
+            |entry: &Job, _: Vec<Job>| entry.clone(),
+        )
+        .compile()
+        .unwrap();
+
+    let (result, events) = run(&graph, Arc::default()).await;
+
+    assert_eq!(failed_message(result), "branch 'a': bad query");
+    assert_eq!(
+        branch_ends(&events),
+        [
+            ("Investigate/a".to_string(), BranchResult::Failed, None),
+            (
+                "Investigate/b".to_string(),
+                BranchResult::Cancelled,
+                Some(BranchEndReason::SiblingFailed)
+            ),
+        ]
+    );
+}
+
 #[test]
 fn bad_options_are_refused_at_compile() {
     let compile = |options: ParallelGroupOptions<Job>| {

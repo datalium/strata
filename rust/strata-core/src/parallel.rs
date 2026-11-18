@@ -965,21 +965,23 @@ where
 /// `inputs.stream` is the group's own [`StreamContext`] when the run is
 /// streaming; each branch gets a copy of it retargeted at `"<group>/<branch>"`.
 /// `names` are the branches' names in declaration order, made once when the
-/// group was added (`design/49-Burst-Throughput.md`).
+/// group was added. `inputs` is borrowed, and the launcher borrows the group's
+/// context and stream from it, so this future holds neither twice
+/// (`design/49-Burst-Throughput.md`).
 pub(crate) async fn run_branches<S>(
     group: &str,
     branches: &[(String, Branch<S>)],
     names: &[String],
     options: &ParallelGroupOptions<S>,
     state: S,
-    inputs: AttemptInputs,
+    inputs: &AttemptInputs,
 ) -> Result<BranchOutcomes<S>, NodeError>
 where
     S: Clone + Send + Sync + 'static,
 {
     let state = Arc::new(state);
-    let context = inputs.context.clone();
-    let stream = inputs.stream.clone();
+    let context = &inputs.context;
+    let stream = inputs.stream.as_ref();
     let mut launch = move |index: usize, started: Launch| -> BranchWork<S> {
         let (name, branch) = &branches[index];
         let stream = stream
@@ -1031,7 +1033,7 @@ where
         noun: Noun::BRANCH,
         winds_down: false,
     };
-    run_fan_out(names, &mut launch, &settings, &inputs).await
+    run_fan_out(names, &mut launch, &settings, inputs).await
 }
 
 /// Starts the branches of a fan-out (a parallel group's, or a map's items), at
