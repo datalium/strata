@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0.0",
+  "entry_point": "Plan",
+  "nodes": [
+    { "name": "Plan", "metadata": null },
+    { "name": "Act", "metadata": null },
+    { "name": "Review", "metadata": null }
+  ],
+  "edges": [
+    { "from": "Plan", "to": "Act", "guarded": false, "condition": null },
+    { "from": "Act", "to": "Review", "guarded": true, "condition": "needs review" },
+    { "from": "Act", "to": "Plan", "guarded": true, "condition": "otherwise" },
+    { "from": "Review", "to": "Plan", "guarded": false, "condition": null }
+  ]
+}

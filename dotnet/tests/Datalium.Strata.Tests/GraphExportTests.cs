@@ -55,10 +55,16 @@ public class GraphExportTests
         Assert.True(GraphValidator.Validate(topology).IsValid);
 
         // ...which is what the executor's own edge list would get wrong.
+        // Without the fallback, nothing can reach an end either: Ship's only edge loops back.
         var routingOnly = FallbackPipeline().Compile().Topology;
-        var error = Assert.Single(GraphValidator.Validate(routingOnly).Errors);
-        Assert.Equal("STRATA_ERR_ORPHAN", error.Code);
-        Assert.Equal("ManualReview", error.Node);
+        Assert.Equal(
+            [
+                ("STRATA_ERR_ORPHAN", "ManualReview"),
+                ("STRATA_ERR_NO_TERMINAL", "Intake"),
+                ("STRATA_ERR_NO_TERMINAL", "Charge"),
+                ("STRATA_ERR_NO_TERMINAL", "Ship"),
+            ],
+            GraphValidator.Validate(routingOnly).Errors.Select(e => (e.Code, e.Node)));
     }
 
     [Fact]

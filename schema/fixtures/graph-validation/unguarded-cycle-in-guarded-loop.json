@@ -4,12 +4,14 @@
   "nodes": [
     { "name": "A", "metadata": null },
     { "name": "B", "metadata": null },
-    { "name": "C", "metadata": null }
+    { "name": "C", "metadata": null },
+    { "name": "Done", "metadata": null }
   ],
   "edges": [
     { "from": "A", "to": "B", "guarded": false, "condition": null },
     { "from": "B", "to": "C", "guarded": false, "condition": null },
     { "from": "C", "to": "B", "guarded": false, "condition": null },
-    { "from": "C", "to": "A", "guarded": true, "condition": "retry" }
+    { "from": "C", "to": "A", "guarded": true, "condition": "retry" },
+    { "from": "C", "to": "Done", "guarded": false, "condition": null }
   ]
 }

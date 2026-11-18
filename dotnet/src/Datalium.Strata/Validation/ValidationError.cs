@@ -36,6 +36,12 @@ public enum ValidationErrorKind
     /// a map item can't freeze.
     /// </summary>
     BoundaryInMap,
+
+    /// <summary>
+    /// A node reachable from the entry point with no path to a node that ends the run
+    /// (<c>design/Arch-Specs/STRATA-SPEC-004.md</c>): every path from it loops back.
+    /// </summary>
+    NoTerminal,
 }
 
 public sealed record ValidationError(

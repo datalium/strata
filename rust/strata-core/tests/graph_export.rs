@@ -54,10 +54,23 @@ fn a_node_reachable_only_through_a_fallback_is_not_an_orphan_in_the_export() {
         edges: fallback_pipeline().compile().unwrap().definition.edges,
         ..definition
     };
-    let errors = validate(&routing_only).errors;
-    assert_eq!(errors.len(), 1);
-    assert_eq!(errors[0].code, "STRATA_ERR_ORPHAN");
-    assert_eq!(errors[0].node, "ManualReview");
+    // Without the fallback, nothing can reach an end either: Ship's only
+    // edge loops back.
+    let result = validate(&routing_only);
+    let errors: Vec<(&str, &str)> = result
+        .errors
+        .iter()
+        .map(|e| (e.code, e.node.as_str()))
+        .collect();
+    assert_eq!(
+        errors,
+        [
+            ("STRATA_ERR_ORPHAN", "ManualReview"),
+            ("STRATA_ERR_NO_TERMINAL", "Intake"),
+            ("STRATA_ERR_NO_TERMINAL", "Charge"),
+            ("STRATA_ERR_NO_TERMINAL", "Ship"),
+        ]
+    );
 }
 
 #[test]

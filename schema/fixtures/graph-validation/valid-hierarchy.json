@@ -30,11 +30,13 @@
               "entry_point": "Apply",
               "nodes": [
                 { "name": "Apply", "metadata": null },
-                { "name": "Verify", "metadata": null }
+                { "name": "Verify", "metadata": null },
+                { "name": "Done", "metadata": null }
               ],
               "edges": [
                 { "from": "Apply", "to": "Verify", "guarded": false, "condition": null },
-                { "from": "Verify", "to": "Apply", "guarded": true, "condition": null }
+                { "from": "Verify", "to": "Apply", "guarded": true, "condition": null },
+                { "from": "Verify", "to": "Done", "guarded": false, "condition": null }
               ]
             }
           },
