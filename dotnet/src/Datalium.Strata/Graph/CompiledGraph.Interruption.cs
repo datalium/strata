@@ -976,24 +976,7 @@ public sealed partial class CompiledGraph<TState>
         // lease cancels the run's token, which is what stops the child.
         if (entry.IsSubgraph && level.Checkpoints)
         {
-            var around = level;
-            JsonNode? started = null;
-            level = level with
-            {
-                ChildProgress = async child =>
-                {
-                    started ??= JsonSerializer.SerializeToNode(state);
-                    var running = RunningAt(threadId, node, node, started, around, child);
-                    if (around.Progress is { } up)
-                    {
-                        await up(running).ConfigureAwait(false);
-                    }
-                    else
-                    {
-                        await PersistAsync(store, running, around).ConfigureAwait(false);
-                    }
-                },
-            };
+            level = WithChildProgress(threadId, node, state, store, level);
         }
 
         var attempts = 0;
@@ -1009,21 +992,23 @@ public sealed partial class CompiledGraph<TState>
                 return new NodeOutcome.Cancelled(Child: null);
             }
 
-            // The timeout runs on the run's clock (design/25-Retry-Backoff.md).
+            // The timeout runs on the run's clock (design/25-Retry-Backoff.md). Only a node with one has a
+            // token of the attempt's own: nothing else cancels an attempt apart from its level, so any
+            // other node's attempt watches the level's token (design/49-Burst-Throughput.md), as the Rust
+            // engine's does (design/38-Rust-Executor-Overhead.md).
             using var expiry = timeout is { } duration ? new CancellationTokenSource(duration, level.Run.Clock) : null;
-            using var attempt = expiry is null
-                ? CancellationTokenSource.CreateLinkedTokenSource(level.Token)
-                : CancellationTokenSource.CreateLinkedTokenSource(level.Token, expiry.Token);
+            using var attempt = expiry is null ? null : CancellationTokenSource.CreateLinkedTokenSource(level.Token, expiry.Token);
+            var token = attempt?.Token ?? level.Token;
 
             // The attempt's span is current while its handler runs, so the handler's own spans nest
             // under it (design/18-Run-Observability.md).
             var activity = scope.StartAttempt(attempts);
             var inputs = new AttemptInputs(
-                level.ContextFor(node, attempts, nodeContext, activity), nodeContext, resume, level, attempt.Token);
+                level.ContextFor(node, attempts, nodeContext, activity), nodeContext, resume, level, token);
             AttemptResult result;
             try
             {
-                result = await AttemptOnceAsync(node, entry, state, inputs, level, attempt, timeout).ConfigureAwait(false);
+                result = await AttemptOnceAsync(node, entry, state, inputs, level, token, timeout).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -1121,6 +1106,35 @@ public sealed partial class CompiledGraph<TState>
             new GraphExecutionResult<TState>.NodeFailed(node, attempts, failure.Message));
     }
 
+    /// <summary>
+    /// <paramref name="around"/> with the <see cref="LevelScope.ChildProgress"/> a checkpointing subgraph node
+    /// gives its child: each running checkpoint the child hands up is nested in this level's, suspended at
+    /// <paramref name="node"/> with the state the node started with, and saved or handed up in turn
+    /// (<c>design/33-Durable-Execution.md</c>, "Subgraphs, groups and maps"). A method of its own so only a
+    /// subgraph node allocates the closure: C# allocates a lambda's captured parameters on entry to the method
+    /// that declares them, which in <see cref="RunAttemptsAsync"/> was every node (<c>design/49-Burst-Throughput.md</c>).
+    /// </summary>
+    private LevelScope WithChildProgress(string threadId, string node, TState state, ICheckpointStore store, LevelScope around)
+    {
+        JsonNode? started = null;
+        return around with
+        {
+            ChildProgress = async child =>
+            {
+                started ??= JsonSerializer.SerializeToNode(state);
+                var running = RunningAt(threadId, node, node, started, around, child);
+                if (around.Progress is { } up)
+                {
+                    await up(running).ConfigureAwait(false);
+                }
+                else
+                {
+                    await PersistAsync(store, running, around).ConfigureAwait(false);
+                }
+            },
+        };
+    }
+
     /// <summary>A failure's retry hint, which only a transient failure has.</summary>
     private static TimeSpan? HintOf(NodeException failure) =>
         failure.Kind == NodeFailureKind.Transient ? failure.RetryAfter : null;
@@ -1173,7 +1187,7 @@ public sealed partial class CompiledGraph<TState>
         TState state,
         AttemptInputs inputs,
         LevelScope level,
-        CancellationTokenSource attempt,
+        CancellationToken attempt,
         TimeSpan? timeout)
     {
         try

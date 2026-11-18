@@ -173,6 +173,26 @@ public class NodeContextTests
         Assert.Equal([false, true], seen.Select(c => c.Stream is not null));
     }
 
+    /// <summary>
+    /// The engine builds a context's idempotency key the first time it is read
+    /// (<c>design/49-Burst-Throughput.md</c>), which may be after its run has ended: it is the key its node
+    /// had. The Rust engine has done the same since <c>design/38</c>.
+    /// </summary>
+    [Fact]
+    public async Task The_Idempotency_Key_Is_The_Nodes_Even_When_It_Is_Asked_For_Late()
+    {
+        var seen = new ConcurrentQueue<NodeContext>();
+        var graph = new StateGraph<Doc>()
+            .AddNode("Load", Record(seen))
+            .AddParallelGroup("Fan", new ParallelBranches<Doc>().Branch("b1", Record(seen)), (entry, _) => entry)
+            .AddEdge("Load", "Fan")
+            .Compile();
+
+        Completed(await graph.RunAsync("t", NewDoc(), new InMemoryCheckpointStore(), new RunOptions { RunId = "run-1" }));
+
+        Assert.Equal(["t/Load#1@run-1", "t/Fan/b1#2@run-1"], seen.Select(c => c.IdempotencyKey));
+    }
+
     [Fact]
     public void A_Handler_Can_Be_Unit_Tested_With_A_Context_Built_By_Hand()
     {
@@ -180,6 +200,8 @@ public class NodeContextTests
 
         Assert.Equal(1, ctx.Attempt);
         Assert.Null(ctx.Stream);
+        Assert.Equal(string.Empty, ctx.IdempotencyKey);
+        Assert.Equal("t/Draft#7", new NodeContext { ThreadId = "t", Node = "Draft", NodePath = "Draft", IdempotencyKey = "t/Draft#7" }.IdempotencyKey);
     }
 
     private sealed record Greeter(string Word);

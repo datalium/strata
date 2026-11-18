@@ -167,16 +167,17 @@ public sealed class ParallelBranches<TState>
 internal static class ParallelGroupRunner
 {
     /// <summary>
-    /// Runs <paramref name="branches"/> against <paramref name="state"/> with
-    /// <paramref name="options"/> (<c>design/26-Parallel-Group-Controls-And-Joins.md</c>); see
-    /// <see cref="FanOutRunner.RunAsync{TResult}"/>. An async branch's <see cref="NodeContext"/> is named
-    /// <c>"&lt;group&gt;/&lt;branch&gt;"</c>, carries the group's attempt, decision and
-    /// <see cref="NodeContext.LastFailure"/>, and its token is the branch's own.
+    /// Runs <paramref name="branches"/> against <paramref name="state"/> as <paramref name="plan"/> says
+    /// (<c>design/26-Parallel-Group-Controls-And-Joins.md</c>): what <see cref="Plan"/> made of the group's
+    /// options when it was added. See <see cref="FanOutRunner.RunAsync{TResult}"/>. An async branch's
+    /// <see cref="NodeContext"/> is named <c>"&lt;group&gt;/&lt;branch&gt;"</c>, carries the group's attempt,
+    /// decision and <see cref="NodeContext.LastFailure"/>, and its token is the branch's: the one every
+    /// branch of the group shares, or with a branch timeout one of its own that the timeout cancels too.
     /// </summary>
     internal static Task<BranchOutcomes<TState>> RunAsync<TState>(
         string group,
         IReadOnlyList<BranchEntry<TState>> branches,
-        ParallelGroupOptions<TState> options,
+        GroupPlan<TState> plan,
         TState state,
         AttemptInputs inputs)
     {
@@ -207,9 +208,17 @@ internal static class ParallelGroupRunner
             return branch.Async!(state, context, started.Token).AsTask();
         };
 
-        return FanOutRunner.RunAsync(
+        return FanOutRunner.RunAsync(plan.Names, launch, plan.Settings, inputs);
+    }
+
+    /// <summary>
+    /// What a group's every run shares, made once when the group is added (its options are immutable):
+    /// its branch names in declaration order, and how its fan-out runs (<c>design/49-Burst-Throughput.md</c>).
+    /// </summary>
+    internal static GroupPlan<TState> Plan<TState>(
+        IReadOnlyList<BranchEntry<TState>> branches, ParallelGroupOptions<TState> options) =>
+        new(
             [.. branches.Select(b => b.Name)],
-            launch,
             new FanOutSettings<TState>(
                 options.MaxConcurrency,
                 options.BranchTimeout,
@@ -217,7 +226,8 @@ internal static class ParallelGroupRunner
                 options.Partial,
                 options.Join,
                 FanOutNoun.Branch,
-                WindsDown: false),
-            inputs);
-    }
+                WindsDown: false));
 }
+
+/// <summary>A group's branch names and fan-out settings, as <see cref="ParallelGroupRunner.Plan"/> made them.</summary>
+internal sealed record GroupPlan<TState>(IReadOnlyList<string> Names, FanOutSettings<TState> Settings);

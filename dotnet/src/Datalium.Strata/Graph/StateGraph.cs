@@ -229,11 +229,12 @@ public sealed class StateGraph<TState>
 
         // Snapshot now, so adding to `branches` afterwards can't change a graph already declared.
         var snapshot = branches.Snapshot();
+        var plan = ParallelGroupRunner.Plan(snapshot, options);
 
         NodeHandler<TState> run = async (state, inputs) =>
             new NodeStep<TState>.Done(reducer(
                 state,
-                await ParallelGroupRunner.RunAsync(name, snapshot, options, state, inputs).ConfigureAwait(false)));
+                await ParallelGroupRunner.RunAsync(name, snapshot, plan, state, inputs).ConfigureAwait(false)));
         ClaimNodeName(name, new(NodeKind.Fallible, run, NeedsStream: snapshot.Any(b => b.Streaming), IsSubgraph: false), metadata);
         _parallelGroups[name] = branches.Shape() with
         {

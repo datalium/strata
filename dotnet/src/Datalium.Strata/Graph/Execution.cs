@@ -217,7 +217,7 @@ internal sealed class RunScope(
             Activity = activity,
             Decision = level.Decision,
             LastFailure = lastFailure,
-            IdempotencyKey = level.KeyFor(path),
+            KeyLevel = level,
             IsRecovery = level.Recovering,
             Telemetry = Telemetry,
         };
@@ -282,13 +282,14 @@ internal sealed record LevelScope(
     /// The idempotency key of the handler at <paramref name="path"/> running at this level's current hop
     /// (<see cref="NodeContext.IdempotencyKey"/>): the thread, the path and the hop numbers from the outermost
     /// level in. A durable run stores its hop counts, so a recovery repeats the key; any other run adds its
-    /// run id, so a later resume, which counts from wherever its checkpoint says, can't repeat one.
+    /// run id, so a later resume, which counts from wherever its checkpoint says, can't repeat one. One string,
+    /// built when a handler first asks for it (<see cref="NodeContext.IdempotencyKey"/>).
     /// </summary>
-    public string KeyFor(string path)
-    {
-        var key = $"{Run.ThreadId}/{path}#{HopChain}{Hop.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
-        return Run.Durable ? key : $"{key}@{Run.Telemetry.RunId}";
-    }
+    public string KeyFor(string path) =>
+        Run.Durable
+            ? string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{Run.ThreadId}/{path}#{HopChain}{Hop}")
+            : string.Create(
+                System.Globalization.CultureInfo.InvariantCulture, $"{Run.ThreadId}/{path}#{HopChain}{Hop}@{Run.Telemetry.RunId}");
 
     /// <summary>
     /// What a checkpoint at this level holds in <c>metadata</c>: the run's keys, <paramref name="engine"/>'s,
