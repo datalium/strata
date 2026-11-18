@@ -387,8 +387,8 @@ public class GroupControlsTests
 
     /// <summary>
     /// The run ends at once, since the executor stops waiting for the group, and the group still gives up on
-    /// the branch and ends its span, though the branch never finishes. No Rust twin yet: there the run can end
-    /// failed instead of cancelled, a bug of its own (#48).
+    /// the branch and ends its span, though the branch never finishes. The Rust twin is the test that found #48,
+    /// where the run ended failed instead of cancelled.
     /// </summary>
     [Fact]
     public async Task A_Run_Cancelled_While_A_Branch_Ignores_Its_Token_Ends_At_Once_And_Ends_The_Branch()

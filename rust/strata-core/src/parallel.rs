@@ -1131,6 +1131,18 @@ where
         let Some(joined) = joined else {
             break;
         };
+        // A group's attempt token fired: the run was cancelled, passed its
+        // deadline or lost its lease, or an enclosing subgraph timed out. The
+        // executor stops waiting for the
+        // group then and drops it, but its `select!` polls the group first,
+        // so a group whose branches the token has already stopped mustn't
+        // settle as a failure (#48). It gives up on them, reporting them
+        // cancelled, and waits to be dropped. Never a map's: the executor
+        // waits for a map to wind down, which it does above.
+        if !settings.winds_down && inputs.token().is_cancelled() {
+            run.give_up(None).await;
+            return std::future::pending().await;
+        }
         let (index, settled) = match joined {
             Ok(settled) => settled,
             Err(error) if error.is_panic() => {

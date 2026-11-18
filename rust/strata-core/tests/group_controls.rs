@@ -566,6 +566,60 @@ async fn a_branch_that_ignores_its_token_is_given_up_on_when_a_sibling_fails() {
     );
 }
 
+/// The run ends cancelled, not failed, though the group's only branch never
+/// finishes, and the group still ends the branch (#48). Cancelled from inside
+/// the run's own task, so the branch's task has settled before the group is
+/// polled again: the order that used to make the group fail first. The .NET
+/// twin also checks the branch's span.
+#[tokio::test(start_paused = true)]
+async fn a_run_cancelled_while_a_branch_ignores_its_token_ends_at_once_and_ends_the_branch() {
+    let started = Arc::new(tokio::sync::Notify::new());
+    let stuck_and_started: Handler = {
+        let started = started.clone();
+        Box::new(move |_job, _ctx| {
+            started.notify_one();
+            Box::pin(std::future::pending())
+        })
+    };
+    let graph = StateGraph::<Job>::new()
+        .add_parallel_group(
+            "Investigate",
+            branches(vec![("b", stuck_and_started)]),
+            |entry: &Job, _: Vec<Job>| entry.clone(),
+        )
+        .compile()
+        .unwrap();
+    let cancel = CancellationToken::new();
+    let (observer, events) = RunEventChannel::new();
+
+    let run = graph.run_with(
+        "t",
+        job(),
+        Arc::new(TestStore::default()),
+        RunConfig::new()
+            .with_observer(observer)
+            .with_cancellation(cancel.clone()),
+    );
+    let (result, ()) = tokio::time::timeout(PATIENCE, async {
+        tokio::join!(run, async {
+            started.notified().await;
+            cancel.cancel();
+        })
+    })
+    .await
+    .expect("the run ends once it is cancelled");
+
+    match result {
+        GraphExecutionResult::Cancelled { node, .. } => assert_eq!(node, "Investigate"),
+        GraphExecutionResult::Failed(error) => panic!("expected Cancelled, got Failed({error:?})"),
+        _ => panic!("expected Cancelled"),
+    }
+    assert_eq!(
+        branch_ends(&drain(events).await),
+        [("Investigate/b".to_string(), BranchResult::Cancelled, None)]
+    );
+}
+
 #[test]
 fn bad_options_are_refused_at_compile() {
     let compile = |options: ParallelGroupOptions<Job>| {
