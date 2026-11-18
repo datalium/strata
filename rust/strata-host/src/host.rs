@@ -189,6 +189,12 @@ pub struct RecoveryDriver {
     /// The most times a thread is recovered without a node committing in
     /// between.
     pub max_recoveries: Option<u32>,
+    /// How many threads are checked and recovered at once: at least 1, and 8
+    /// by default, where the library call's default is 1. Each recovery
+    /// re-runs the node that was in flight, on top of the process's own runs,
+    /// so a process near its model's rate limit or its database pool sets it
+    /// lower, and 1 recovers one at a time.
+    pub max_concurrency: usize,
     /// Only threads whose latest checkpoint's metadata has every pair.
     pub metadata: BTreeMap<String, String>,
     /// Whether a graph with an identity recovers only the threads it wrote.
@@ -207,6 +213,7 @@ impl Default for RecoveryDriver {
             batch_size: 100,
             stale_after: None,
             max_recoveries: None,
+            max_concurrency: 8,
             metadata: BTreeMap::new(),
             match_graph: true,
             priority: None,
@@ -240,6 +247,11 @@ impl RecoveryDriver {
         self
     }
 
+    pub fn with_max_concurrency(mut self, max_concurrency: usize) -> Self {
+        self.max_concurrency = max_concurrency;
+        self
+    }
+
     pub fn with_metadata(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.metadata.insert(key.into(), value.into());
         self
@@ -270,6 +282,7 @@ impl RecoveryDriver {
         };
         let mut options = RecoverOptions::new()
             .with_limit(self.batch_size)
+            .with_max_concurrency(self.max_concurrency)
             .with_match_graph(self.match_graph)
             .with_config(config)
             .with_stop(stop.clone());
@@ -293,6 +306,7 @@ impl fmt::Debug for RecoveryDriver {
             .field("batch_size", &self.batch_size)
             .field("stale_after", &self.stale_after)
             .field("max_recoveries", &self.max_recoveries)
+            .field("max_concurrency", &self.max_concurrency)
             .field("metadata", &self.metadata)
             .field("match_graph", &self.match_graph)
             .finish_non_exhaustive()
@@ -653,6 +667,10 @@ impl Host {
         T: CheckpointStore + CheckpointQuery + 'static,
     {
         self.check_pacing("recovery", driver.interval, driver.batch_size);
+        if driver.max_concurrency == 0 {
+            self.refusals
+                .push("the recovery driver's max_concurrency must be at least 1".to_string());
+        }
         if graph.checkpointing() != CheckpointPolicy::EveryNode {
             self.refusals.push(format!(
                 "the recovery driver for {} needs a graph compiled with CheckpointPolicy::EveryNode: only such a graph leaves a running thread to recover",

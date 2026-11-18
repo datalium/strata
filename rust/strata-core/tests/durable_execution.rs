@@ -10,7 +10,7 @@
 mod lease_store;
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -60,11 +60,13 @@ fn job() -> Job {
 /// A store as one process sees it. Once the process has died nothing it does
 /// reaches the store: not the checkpoint after the node in flight, not a
 /// `failed` one, not the release of its lease. With `rewound`, a process that
-/// loaded that checkpoint before somebody else moved the thread on.
+/// loaded that checkpoint before somebody else moved the thread on. `loads`
+/// is every thread whose latest checkpoint it loaded.
 struct Process {
     inner: Arc<LeaseStore>,
     dead: AtomicBool,
     rewound: Option<LatestCheckpoint>,
+    loads: Mutex<Vec<String>>,
 }
 
 impl Process {
@@ -73,6 +75,7 @@ impl Process {
             inner: inner.clone(),
             dead: AtomicBool::new(false),
             rewound: None,
+            loads: Mutex::new(Vec::new()),
         })
     }
 
@@ -81,6 +84,7 @@ impl Process {
             inner: inner.clone(),
             dead: AtomicBool::new(false),
             rewound: Some(stale),
+            loads: Mutex::new(Vec::new()),
         })
     }
 
@@ -118,6 +122,7 @@ impl CheckpointStore for Process {
         &'a self,
         thread_id: &'a str,
     ) -> BoxFuture<'a, Result<Option<LatestCheckpoint>, CheckpointStoreError>> {
+        self.loads.lock().unwrap().push(thread_id.to_string());
         match &self.rewound {
             Some(stale) => Box::pin(std::future::ready(Ok(Some(stale.clone())))),
             None => self.alive(|| self.inner.load_latest(thread_id)),
@@ -302,6 +307,61 @@ fn chain(journal: &Arc<Journal>, nodes: &[&str]) -> StateGraph<Job> {
 
 fn line(journal: &Arc<Journal>, nodes: &[&str]) -> Arc<CompiledGraph<Job>> {
     Arc::new(chain(journal, nodes).compile_with(durable()).unwrap())
+}
+
+/// Where recoveries meet: each waits, up to [`PATIENCE`], for `size` to be
+/// inside at once, until they have been once. `most` is the most that were
+/// ever inside together.
+struct Rendezvous {
+    size: usize,
+    inside: AtomicUsize,
+    most: AtomicUsize,
+}
+
+impl Rendezvous {
+    fn new(size: usize) -> Arc<Self> {
+        Arc::new(Self {
+            size,
+            inside: AtomicUsize::new(0),
+            most: AtomicUsize::new(0),
+        })
+    }
+
+    fn most(&self) -> usize {
+        self.most.load(Ordering::SeqCst)
+    }
+
+    async fn meet(&self) {
+        let now = self.inside.fetch_add(1, Ordering::SeqCst) + 1;
+        self.most.fetch_max(now, Ordering::SeqCst);
+        let deadline = tokio::time::Instant::now() + PATIENCE;
+        while self.most() < self.size && tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        self.inside.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// `A` -> `B` -> `C`, where a recovery of `B` first meets the others at
+/// `rendezvous`.
+fn meeting(journal: &Arc<Journal>, rendezvous: &Arc<Rendezvous>) -> Arc<CompiledGraph<Job>> {
+    let (journal_b, rendezvous) = (journal.clone(), rendezvous.clone());
+    let graph = node(StateGraph::<Job>::new(), journal, "A").add_async_node(
+        "B",
+        move |job: Job, context: NodeContext| {
+            let (journal, rendezvous) = (journal_b.clone(), rendezvous.clone());
+            async move {
+                if context.is_recovery() {
+                    rendezvous.meet().await;
+                }
+                journal.visit(job, &context)
+            }
+        },
+    );
+    let graph = node(graph, journal, "C")
+        .add_edge("A", "B")
+        .add_edge("B", "C");
+    Arc::new(graph.compile_with(durable()).unwrap())
 }
 
 /// `A` (a boundary, rejected to `Rejected`) -> `B` -> `C`.
@@ -1605,6 +1665,123 @@ async fn the_driver_stops_recovering_a_thread_that_keeps_dying() {
         completed(graph.recover("t", store.clone()).await).trail,
         "ABC"
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_driver_recovers_up_to_its_concurrency_at_once_and_reports_in_listing_order() {
+    let store = LeaseStore::new();
+    let journal = Journal::new();
+    let rendezvous = Rendezvous::new(2);
+    let graph = meeting(&journal, &rendezvous);
+    for thread in ["t1", "t2", "t3", "t4"] {
+        crash(&graph, &journal, &store, thread, "B", RunConfig::new()).await;
+    }
+    let listed: Vec<String> = store
+        .list_threads(&ThreadQuery::default().with_states([ThreadState::Running]))
+        .await
+        .unwrap()
+        .threads
+        .into_iter()
+        .map(|thread| thread.thread_id)
+        .collect();
+
+    let report = graph
+        .recover_stale(
+            store.clone(),
+            Utc::now(),
+            RecoverOptions::new()
+                .with_stale_after(Duration::ZERO)
+                .with_max_concurrency(2),
+        )
+        .await
+        .unwrap();
+
+    // Two were inside B together, and never more.
+    assert_eq!(rendezvous.most(), 2);
+    let recovered: Vec<String> = report
+        .recovered
+        .iter()
+        .map(|thread| thread.thread_id.clone())
+        .collect();
+    assert_eq!(recovered, listed);
+    for thread in report.recovered {
+        assert_eq!(completed(thread.result).trail, "ABC");
+    }
+    assert!(report.skipped.is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn with_concurrency_the_driver_still_recovers_no_more_than_its_limit() {
+    let store = LeaseStore::new();
+    let journal = Journal::new();
+    let graph = line(&journal, &["A", "B", "C"]);
+    let threads = ["t1", "t2", "t3", "t4", "t5"];
+    for thread in threads {
+        crash(&graph, &journal, &store, thread, "B", RunConfig::new()).await;
+    }
+    let options = || RecoverOptions::new().with_stale_after(Duration::ZERO);
+
+    let Err(StrataError::ExecutionAborted(refusal)) = graph
+        .recover_stale(store.clone(), Utc::now(), options().with_max_concurrency(0))
+        .await
+    else {
+        panic!("expected a refusal");
+    };
+    assert_eq!(refusal, "max_concurrency must be at least 1");
+
+    let report = graph
+        .recover_stale(
+            store.clone(),
+            Utc::now(),
+            options().with_limit(2).with_max_concurrency(4),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(report.recovered.len(), 2);
+    assert!(report.skipped.is_empty());
+    assert_eq!(journal.count("C"), 2);
+    for thread in threads {
+        if report.recovered.iter().all(|r| r.thread_id != thread) {
+            assert_eq!(shapes(&store, thread).last().unwrap(), "running:A>B");
+        }
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_driver_skips_a_live_thread_without_loading_it() {
+    let store = LeaseStore::new();
+    let journal = Journal::new();
+    let graph = line(&journal, &["A", "B", "C"]);
+    crash(&graph, &journal, &store, "dead", "B", leased("worker-1")).await;
+    crash(
+        &graph,
+        &journal,
+        &store,
+        "live",
+        "B",
+        RunConfig::new().with_lease(LeaseOptions::new("worker-9", Duration::from_secs(3600))),
+    )
+    .await;
+    store.advance(TTL + Duration::from_millis(1));
+    let process = Process::new(&store);
+
+    let report = graph
+        .recover_stale(
+            process.clone(),
+            store.now(),
+            RecoverOptions::new().with_config(leased("worker-2")),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(report.recovered.len(), 1);
+    assert_eq!(report.recovered[0].thread_id, "dead");
+    assert_eq!(report.skipped.len(), 1);
+    assert_eq!(report.skipped[0].thread_id, "live");
+    let loads = process.loads.lock().unwrap().clone();
+    assert!(loads.iter().any(|thread| thread == "dead"), "{loads:?}");
+    assert!(!loads.iter().any(|thread| thread == "live"), "{loads:?}");
 }
 
 #[tokio::test(start_paused = true)]

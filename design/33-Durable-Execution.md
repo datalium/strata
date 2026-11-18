@@ -27,7 +27,7 @@ It was written as a blueprint before implementation and is now built. "Review de
 | A resume | **Its claim is a `running` checkpoint**, saved only if the thread hasn't changed, holding the decision, the state with the overrides applied and the route taken. It replaces the `resumed_at` stamp under `EveryNode`, so a crash after an approval can't lose the approval. |
 | Thread state | **`CheckpointThreadState.Running`** (`running`), and `Completed` is now reachable. Listed like any other state. |
 | Recovering one thread | **`RecoverAsync(threadId, store, options)`** continues a `running` thread at its `next_node`, at every nesting level. Its claim is conditional too, so of two recoveries one runs. A thread a live lease holds is refused. |
-| Recovering all of them | **`RecoverStaleAsync(store, options)`**, a library driver like `WakeDueAsync`: lists `running` threads, skips the ones a live lease holds, recovers the rest one at a time. |
+| Recovering all of them | **`RecoverStaleAsync(store, options)`**, a library driver like `WakeDueAsync`: lists `running` threads, skips the ones a live lease holds, recovers the rest `MaxConcurrency` at a time (one by default). |
 | Who is dead | **A `running` thread with no live lease.** A deployment without leases must say how old a `running` checkpoint has to be (`StaleAfter`); with a lease on the recovery run it defaults to zero. |
 | The crash contract | **At least once.** The node in flight when the process died runs again. `NodeContext.IdempotencyKey` is the same on that re-run, and `NodeContext.IsRecovery` says the node may have run before. |
 | A node that crashes every time | **`RecoverOptions.MaxRecoveries`**: the driver skips a thread recovered that many times without a node committing (`strata.recoveries`). An operator ends it. The count is public in both engines (`RecoveryCount.Of` / `recoveries_of`), so an application that recovers threads itself limits its own. |
@@ -132,6 +132,7 @@ public sealed record RecoverOptions
     public IReadOnlyDictionary<string, string> Metadata { get; init; }
     public bool MatchGraph { get; init; } = true;
     public int Limit { get; init; } = ThreadQuery.DefaultLimit;   // the most threads recovered in one call
+    public int MaxConcurrency { get; init; } = 1;                  // threads checked and recovered at once (since #39)
     public RunOptions Run { get; init; } = new();
 }
 
@@ -182,7 +183,7 @@ impl<S> CompiledGraph<S> {
     where T: CheckpointStore + CheckpointQuery + 'static;
 }
 
-pub struct RecoverOptions { /* stale_after, max_recoveries, metadata, match_graph, limit, config */ }
+pub struct RecoverOptions { /* stale_after, max_recoveries, metadata, match_graph, limit, max_concurrency, config */ }
 impl RecoverOptions {
     pub fn new() -> Self;
     pub fn with_stale_after(self, age: Duration) -> Self;
@@ -190,6 +191,7 @@ impl RecoverOptions {
     pub fn with_metadata(self, key: impl Into<String>, value: impl Into<String>) -> Self;
     pub fn with_match_graph(self, match_graph: bool) -> Self;
     pub fn with_limit(self, limit: usize) -> Self;
+    pub fn with_max_concurrency(self, max_concurrency: usize) -> Self;   // since #39
     pub fn with_config(self, config: RunConfig) -> Self;
 }
 
@@ -297,10 +299,12 @@ Hop counts (`strata.hops`, `design/24-Loop-Circuit-Breaker.md`) are written on e
 A library call, on the application's cadence. It:
 
 1. **Lists** `running` threads (`ThreadQuery.States`), this graph's by identity as `WakeDueAsync` does, filtered by `RecoverOptions.Metadata`, and older than `StaleAfter` when that isn't zero (`ThreadQuery.UpdatedBefore`).
-2. **Decides each again** from its latest checkpoint: still `running`; still stale; this graph's; not recovered `MaxRecoveries` times already; not held by a live lease. Otherwise it is skipped with the reason, and nothing is written.
+2. **Decides each again**: not held by a live lease, read first, so a live thread costs one read and takes no scheduler slot; then, from its latest checkpoint, still `running`; still stale; this graph's; not recovered `MaxRecoveries` times already. Otherwise it is skipped with the reason, and nothing is written.
 3. **Recovers** it, as `RecoverAsync` does, with `RecoverOptions.Run`. A recovery whose claim lost (`another run or recovery got there first`) or that found the thread held is a skip.
 
 It reads the whole listing, and stops once `Limit` threads have been recovered. An exception from a recovered run propagates, as from `WakeDueAsync`.
+
+**`MaxConcurrency`** (`with_max_concurrency`) is how many threads it checks and recovers at once: 1 by default, which is one at a time. A recovery is a run like any other, so one at a time recovers a dead worker's threads at one run's latency each, while the worker ran many at once. A value near the worker's own concurrency recovers them about as fast as it ran them. A thread starts only while the recoveries done and in flight are fewer than `Limit`, so a call never recovers more than `Limit`. The report keeps the listing's order. The claims are conditional and the leases fence, so two recoveries never both run one thread. With a run scheduler, each recovery still waits for a slot. `Stop` lets the recoveries in flight finish. The hosted recovery drivers default to 8, not 1 (`35-Hosting-Integration.md`). An exception from one propagates once the others in flight have finished, and none starts after it.
 
 **Staleness.** A lease is the only reliable sign of life:
 
@@ -506,7 +510,8 @@ Built 2026-10-10 in both engines, every store adapter, both decision workers and
 - **The `failed` checkpoint of a run that gave up** is made from the last `running` checkpoint the run itself saved (`RunScope.LastRunning` / `last_running`), at every level, with the result's message (or the exception's, or the panic's) as `error`, `error_kind` `fatal`, and no `attempts`. A run that lost its lease writes nothing, as always.
 - **A plain `RecoverAsync` of a graph with a streaming node** fails at that node like any plain run, and so leaves the thread `failed`, not `running`. Recover such a graph with `RecoverStreaming`. The driver runs plain, as `WakeDueAsync` does.
 - **Ending a `running` thread records the node that was to run** as each level's `suspended_node`, as a cancelled thread's checkpoint does, so `Cancelled.Node`, `StoppedAt` and `inspect` say where the run was, not what it last finished.
-- **The driver reads a thread's lease before it starts a run for it,** so a sweep over live threads costs one read each and no events or spans. The recovery itself checks again when it claims: with a lease of its own by acquiring, without one by reading.
+- **The driver reads a thread's lease before it starts a run for it,** so a sweep over live threads costs one read each and no events or spans. The recovery itself checks again when it claims: with a lease of its own by acquiring, without one by reading. *Since 2026-11-18 (issue #39) the lease is read first, before the thread's checkpoint is loaded and before it waits for a scheduler slot. Before that, it was read last, so a live thread cost two reads and, with a scheduler, a slot.*
+- **`MaxConcurrency`, added 2026-11-18 (issue #39).** One call recovered one thread at a time, so recovering a dead worker that had 150 runs in flight took about 150 runs' latency. A stress run measured 37–64 s to recover 142–174 orphans, against about 300 ms a run. `RecoverOptions.MaxConcurrency` / `with_max_concurrency` (default 1, which is the old behaviour) and the hosted drivers' `MaxConcurrency` / `max_concurrency` (`Strata:Recovery:MaxConcurrency`, default 8) recover that many at once. The library call keeps 1, so an application that calls it itself sees no change. The hosted driver is the default path, and should recover a dead worker in seconds. 8, not 16, because each recovery re-runs a model or tool call on top of the new worker's own runs, and Rust's Postgres pool is 16 connections by default. .NET starts each recovery as a task of its own. Rust polls them together in the calling task (`FuturesUnordered`, from `futures-util`, a new dependency of `datalium-strata`), because `recover_stale` takes `&self` and can't spawn. In Rust a panic in one recovery unwinds the call and drops the others in flight, as a dead process would. Each dropped recovery's thread stays `running`, for the next call to recover.
 - **The driver pages by the default page size (100)** and `Limit` counts recoveries only. A recovered thread moves to the front of the listing, behind the cursor, so it isn't listed twice.
 - **`MaxRecoveries` is the driver's.** `RecoverAsync` always recovers: it is what an operator uses on a thread the driver gave up on. An application that recovers each thread itself (one of its own runs, with its own options) limits its own recoveries by the count: **since SG-39 (2026-10-23) .NET's `RecoveryCount` (`MetadataKey`, `Of`) is public**, as Rust's `RECOVERIES_KEY` and `recoveries_of` always were (it was `internal`, so an application had to read `strata.recoveries` by its literal name). Making it and stopping at it are still the engine's alone (`Counted` and `continues_at` stay internal). A limit on `RecoverAsync` itself wasn't added: the count is enough, and the sweep's skip is the driver's own.
 - **A lease that can't be read** (a store error other than "no leases") skips the thread in Rust (`its lease can't be read: …`) and propagates in .NET, as a load error does in each.

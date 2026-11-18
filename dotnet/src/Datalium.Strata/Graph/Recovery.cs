@@ -47,14 +47,23 @@ public sealed record RecoverOptions
     public int Limit { get; init; } = ThreadQuery.DefaultLimit;
 
     /// <summary>
+    /// How many threads are checked and recovered at once: at least 1, and 1 (one at a time) by default. A
+    /// recovery is a run like any other, so one at a time recovers a dead worker's threads at one run's latency
+    /// each; a worker that ran many at once is recovered about as fast as it ran them with a value near its own.
+    /// The claims are conditional and the leases fence, so two recoveries of one call never both run a thread.
+    /// With a run scheduler (<c>design/40-Run-Scheduler.md</c>) each recovery also waits for a slot.
+    /// </summary>
+    public int MaxConcurrency { get; init; } = 1;
+
+    /// <summary>
     /// The options of each recovery, which is a run of its own: its lease (every worker's, or none's), its
     /// metadata, observer and services, and the clock <c>now</c> is read from.
     /// </summary>
     public RunOptions Run { get; init; } = new();
 
     /// <summary>
-    /// When it fires, the call recovers no more threads and returns what it did; the recovery in flight
-    /// finishes. Unlike the call's own token, which also cancels that run. How a host stops a driver without
+    /// When it fires, the call recovers no more threads and returns what it did; the recoveries in flight
+    /// finish. Unlike the call's own token, which also cancels that run. How a host stops a driver without
     /// leaving a thread cancelled (<c>design/35-Hosting-Integration.md</c>, "Stopping").
     /// </summary>
     public CancellationToken Stop { get; init; }

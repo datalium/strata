@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using System.Threading.Channels;
 using Datalium.Strata.Interruption;
 using Datalium.Strata.Observability;
@@ -153,21 +154,25 @@ public sealed partial class CompiledGraph<TState>
     /// Recovers the threads of <paramref name="store"/> whose run died (<c>design/33-Durable-Execution.md</c>,
     /// "Who is dead"): each <c>running</c> thread that no live lease holds and whose latest checkpoint is older
     /// than <see cref="RecoverOptions.StaleAfter"/>, as
-    /// <see cref="RecoverAsync(string, ICheckpointStore, CancellationToken)"/> does, one at a time, with
+    /// <see cref="RecoverAsync(string, ICheckpointStore, CancellationToken)"/> does,
+    /// <see cref="RecoverOptions.MaxConcurrency"/> at a time (one by default), with
     /// <see cref="RecoverOptions.Run"/>'s options and <paramref name="cancellationToken"/>, until
     /// <see cref="RecoverOptions.Limit"/> threads have been recovered. "Now" is <see cref="RecoverOptions.Run"/>'s
     /// <see cref="RunOptions.TimeProvider"/>, read once.
     ///
     /// Threads are listed by state (this graph's, by identity, and those matching
-    /// <see cref="RecoverOptions.Metadata"/>), and each is loaded and decided again first: one that is no longer
-    /// running or stale, that a live lease holds, that isn't this graph's, or that was recovered
-    /// <see cref="RecoverOptions.MaxRecoveries"/> times already is skipped with nothing written. The claim is
-    /// conditional, so of two drivers that list the same thread one recovers it and the other skips it.
+    /// <see cref="RecoverOptions.Metadata"/>), and each is decided again first: one that a live lease holds (read
+    /// before anything else, so a live thread costs one read), that is no longer running or stale, that isn't this
+    /// graph's, or that was recovered <see cref="RecoverOptions.MaxRecoveries"/> times already is skipped with
+    /// nothing written. The claim is conditional, so of two drivers, or two recoveries in one call, that take the
+    /// same thread one recovers it and the other skips it. The report lists threads in the listing's order,
+    /// whatever order their recoveries finished in.
     ///
     /// A library call: the application calls it on its own cadence (no hosted service). An exception from a
-    /// recovered run propagates, as from <see cref="RecoverAsync(string, ICheckpointStore, CancellationToken)"/>.
+    /// recovered run propagates, as from <see cref="RecoverAsync(string, ICheckpointStore, CancellationToken)"/>,
+    /// once the recoveries in flight have finished; no other starts after it.
     /// </summary>
-    /// <exception cref="ArgumentOutOfRangeException">The limit, the recovery limit or the age is out of range.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">The limit, the recovery limit, the concurrency or the age is out of range.</exception>
     /// <exception cref="ArgumentException">
     /// The run options have a reserved metadata key, or neither a lease nor a <see cref="RecoverOptions.StaleAfter"/>.
     /// </exception>
@@ -185,6 +190,12 @@ public sealed partial class CompiledGraph<TState>
         {
             throw new ArgumentOutOfRangeException(
                 nameof(options), options.MaxRecoveries, "MaxRecoveries must be at least 1");
+        }
+
+        if (options.MaxConcurrency < 1)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options), options.MaxConcurrency, "MaxConcurrency must be at least 1");
         }
 
         if (options.StaleAfter < TimeSpan.Zero)
@@ -212,54 +223,106 @@ public sealed partial class CompiledGraph<TState>
         // Only this graph's threads, when it has an identity (design/31-Graph-Identity.md); any version it may
         // migrate.
         var graph = options.MatchGraph ? Identity : null;
-        var recovered = new List<RecoveredThread<TState>>();
-        var skipped = new List<SkippedThread>();
         bool Stopped() => cancellationToken.IsCancellationRequested || options.Stop.IsCancellationRequested;
+
+        // Up to MaxConcurrency threads at once. A thread is started only while the recoveries done and in flight
+        // are fewer than Limit, so the call never recovers more; each outcome keeps its place in the listing.
+        var running = new List<Task<(int Index, RecoveredThread<TState>? Recovered, SkippedThread? Skipped)>>();
+        var outcomes = new List<(int Index, RecoveredThread<TState>? Recovered, SkippedThread? Skipped)>();
+        var recoveredCount = 0;
+        ExceptionDispatchInfo? failure = null;
+        async Task SettleOneAsync()
+        {
+            var done = await Task.WhenAny(running).ConfigureAwait(false);
+            running.Remove(done);
+            try
+            {
+                var outcome = await done.ConfigureAwait(false);
+                outcomes.Add(outcome);
+                recoveredCount += outcome.Recovered is null ? 0 : 1;
+            }
+            catch (Exception ex)
+            {
+                // Propagates once the recoveries in flight have finished; none starts after it.
+                failure ??= ExceptionDispatchInfo.Capture(ex);
+            }
+        }
+
+        async Task<(int, RecoveredThread<TState>?, SkippedThread?)> RecoverAtAsync(int index, ThreadSummary thread)
+        {
+            var (recoveredThread, skippedThread) =
+                await RecoverOneAsync(thread, staleBefore, options, store, cancellationToken).ConfigureAwait(false);
+            return (index, recoveredThread, skippedThread);
+        }
+
+        bool Done() => failure is not null || recoveredCount >= options.Limit || Stopped();
+        var listed = 0;
         string? cursor = null;
         do
         {
-            var page = await store.ListThreadsAsync(
-                    new ThreadQuery
-                    {
-                        States = RunningThreads,
-                        Metadata = options.Metadata,
-                        UpdatedBefore = staleBefore,
-                        GraphId = graph?.Id,
-                        GraphVersion = Migration is null ? graph?.Version : null,
-                        Cursor = cursor,
-                    },
-                    CancellationToken.None)
-                .ConfigureAwait(false);
-            foreach (var thread in page.Threads)
+            ThreadPage page;
+            try
             {
-                if (recovered.Count >= options.Limit || Stopped())
+                page = await store.ListThreadsAsync(
+                        new ThreadQuery
+                        {
+                            States = RunningThreads,
+                            Metadata = options.Metadata,
+                            UpdatedBefore = staleBefore,
+                            GraphId = graph?.Id,
+                            GraphVersion = Migration is null ? graph?.Version : null,
+                            Cursor = cursor,
+                        },
+                        CancellationToken.None)
+                    .ConfigureAwait(false);
+            }
+            catch
+            {
+                // The recoveries in flight finish first.
+                while (running.Count > 0)
                 {
-                    return new RecoveryReport<TState>(recovered, skipped);
+                    await SettleOneAsync().ConfigureAwait(false);
                 }
 
-                var (recoveredThread, skippedThread) =
-                    await RecoverOneAsync(thread, staleBefore, options, store, cancellationToken)
-                        .ConfigureAwait(false);
-                if (recoveredThread is not null)
+                throw;
+            }
+
+            foreach (var thread in page.Threads)
+            {
+                while (running.Count > 0
+                       && (running.Count >= options.MaxConcurrency || recoveredCount + running.Count >= options.Limit))
                 {
-                    recovered.Add(recoveredThread);
+                    await SettleOneAsync().ConfigureAwait(false);
                 }
-                else
+
+                if (Done())
                 {
-                    skipped.Add(skippedThread!);
+                    break;
                 }
+
+                running.Add(RecoverAtAsync(listed++, thread));
             }
 
             cursor = page.NextCursor;
         }
-        while (cursor is not null && recovered.Count < options.Limit && !Stopped());
+        while (cursor is not null && !Done());
 
-        return new RecoveryReport<TState>(recovered, skipped);
+        while (running.Count > 0)
+        {
+            await SettleOneAsync().ConfigureAwait(false);
+        }
+
+        failure?.Throw();
+        outcomes.Sort((a, b) => a.Index.CompareTo(b.Index));
+        return new RecoveryReport<TState>(
+            [.. outcomes.Where(o => o.Recovered is not null).Select(o => o.Recovered!)],
+            [.. outcomes.Where(o => o.Skipped is not null).Select(o => o.Skipped!)]);
     }
 
     /// <summary>
-    /// Decides again whether <paramref name="listed"/>'s thread is running, stale, this graph's and nobody's, then
-    /// recovers it. With a scheduler, it waits for a slot first (<c>design/40-Run-Scheduler.md</c>).
+    /// Decides again whether <paramref name="listed"/>'s thread is nobody's, running, stale and this graph's, then
+    /// recovers it. With a scheduler, it waits for a slot once no lease holds the thread
+    /// (<c>design/40-Run-Scheduler.md</c>).
     /// </summary>
     private async Task<(RecoveredThread<TState>? Recovered, SkippedThread? Skipped)> RecoverOneAsync(
         ThreadSummary listed,
@@ -269,6 +332,21 @@ public sealed partial class CompiledGraph<TState>
         CancellationToken cancellationToken)
     {
         var threadId = listed.ThreadId;
+
+        // Whoever holds a running thread is running it. Checked first, before a slot is taken or anything loaded,
+        // so a sweep over live threads is one read each and no events; the recovery checks again when it claims.
+        try
+        {
+            if (await store.GetLeaseAsync(threadId, CancellationToken.None).ConfigureAwait(false) is { } live)
+            {
+                return Skip($"it is held by '{live.Owner}' until {WakeTimes.Text(live.ExpiresAt)}");
+            }
+        }
+        catch (NotSupportedException)
+        {
+            // A store without leases: nothing can hold the thread.
+        }
+
         using var admission = await AdmitAsync(options.Run, cancellationToken, listed.Metadata, options.Stop)
             .ConfigureAwait(false);
         if (admission is { IsAdmitted: false })
@@ -316,20 +394,6 @@ public sealed partial class CompiledGraph<TState>
         if (CheckResume(adopted.Checkpoint!, LevelSignals.None, threadId, []).Problem is { } problem)
         {
             return Skip(problem);
-        }
-
-        // Whoever holds a running thread is running it. Checked here, before a run is started for it, so a
-        // sweep over live threads is one read each and no events; the recovery checks again when it claims.
-        try
-        {
-            if (await store.GetLeaseAsync(threadId, CancellationToken.None).ConfigureAwait(false) is { } live)
-            {
-                return Skip($"it is held by '{live.Owner}' until {WakeTimes.Text(live.ExpiresAt)}");
-            }
-        }
-        catch (NotSupportedException)
-        {
-            // A store without leases: nothing can hold the thread.
         }
 
         using var root = RootScope.Start(threadId, options.Run, cancellationToken, RunMode.Recover, Checkpointing, admission);
