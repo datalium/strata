@@ -232,6 +232,59 @@ public sealed class PostgresStoreTests
             Columns(dataSource, "checkpoints").ToJsonString());
     }
 
+    /// <summary>
+    /// A listing joins the head table to the log, and a purge looks for a live lease, by <c>thread_id</c> across two
+    /// collations: the head table's <c>"C"</c> and the database's. Each must stay one lookup in the other table's
+    /// primary key, or a page of a listing joins every matching thread and a purge scans every lease for each
+    /// candidate. With every other way to join turned off, a comparison the key can't answer leaves
+    /// <c>thread_id</c> out of the scan's index condition: a sequential scan, or the whole key read for
+    /// <c>sequence</c> alone.
+    /// </summary>
+    [PostgresFact]
+    public void TheListingAndThePurgeLookUpEachThreadInThePrimaryKey()
+    {
+        using var sandbox = new PostgresSandbox("listing_plan");
+        var dataSource = sandbox.CreateDataSource();
+        using var store = PostgresSandbox.Open(dataSource);
+        using var connection = dataSource.OpenConnection();
+        using (var settings = new NpgsqlCommand(
+            "SET enable_seqscan = off; SET enable_hashjoin = off; SET enable_mergejoin = off", connection))
+        {
+            settings.ExecuteNonQuery();
+        }
+
+        JsonNode Plan(string sql)
+        {
+            using var explain = new NpgsqlCommand($"EXPLAIN (FORMAT JSON) {sql}", connection);
+            return JsonNode.Parse((string)explain.ExecuteScalar()!)!;
+        }
+
+        // The index condition of the plan's scan of `relation`, or null when it has none.
+        static string? IndexCondition(JsonNode? node, string relation) => node switch
+        {
+            JsonObject scan when scan["Relation Name"]?.GetValue<string>() == relation =>
+                scan["Index Cond"]?.GetValue<string>(),
+            JsonObject parent => parent.Select(child => IndexCondition(child.Value, relation)).FirstOrDefault(found => found is not null),
+            JsonArray children => children.Select(child => IndexCondition(child, relation)).FirstOrDefault(found => found is not null),
+            _ => null,
+        };
+
+        var listing = Plan(
+            $"""
+            SELECT c.thread_id, c.sequence {PostgresCheckpointStore.ThreadListingFrom}
+            WHERE h.state = 'interrupted' ORDER BY h.updated_at DESC, h.thread_id DESC LIMIT 1001
+            """);
+        var purge = Plan(
+            $"""
+            SELECT h.thread_id FROM checkpoint_threads h
+            WHERE h.state = 'completed' AND NOT {PostgresCheckpointStore.HeldByLiveLease}
+            ORDER BY h.updated_at, h.thread_id LIMIT 1000
+            """);
+
+        Assert.True(IndexCondition(listing, "checkpoints")?.Contains("thread_id") == true, listing.ToJsonString());
+        Assert.True(IndexCondition(purge, "checkpoint_leases")?.Contains("thread_id") == true, purge.ToJsonString());
+    }
+
     [PostgresFact]
     public void TheHistoryTableMatchesTheSharedColumnFixture()
     {

@@ -217,6 +217,26 @@ pub const POSTGRES_CHECKPOINT_BLOBS_DDL: &str = "CREATE TABLE IF NOT EXISTS chec
     PRIMARY KEY (thread_id, hash)
 )";
 
+/// The head table joined to each thread's latest row in the log, as a listing
+/// reads them. The log's `thread_id` is in the database's collation and the
+/// head table's in `"C"`. Compared as they are, the two would be compared in
+/// `"C"`, which `checkpoints_pkey` can't answer, so every page would join
+/// every matching thread. Compared in the log's collation, each row is one
+/// lookup in the primary key. Equality in a deterministic collation is byte
+/// equality, so the rows are the same either way. Public for the tests that
+/// check the plan. Identical to `PostgresCheckpointStore.ThreadListingFrom`.
+#[doc(hidden)]
+pub const POSTGRES_THREAD_LISTING_FROM: &str = r#"FROM checkpoint_threads h
+JOIN checkpoints c ON c.thread_id = (h.thread_id COLLATE "default") AND c.sequence = h.sequence"#;
+
+/// Whether a live lease holds the head table's thread `h`: what keeps a purge
+/// off a held thread. Compared in the leases' collation, for the reason
+/// [`POSTGRES_THREAD_LISTING_FROM`] gives, so it is one lookup in
+/// `checkpoint_leases_pkey`. Public for the tests that check the plan.
+/// Identical to `PostgresCheckpointStore.HeldByLiveLease`.
+#[doc(hidden)]
+pub const POSTGRES_HELD_BY_LIVE_LEASE: &str = r#"EXISTS (SELECT 1 FROM checkpoint_leases l WHERE l.thread_id = (h.thread_id COLLATE "default") AND l.expires_at > clock_timestamp())"#;
+
 /// A lease as every lease statement returns it: its expiry as Unix
 /// milliseconds, so no date type has to cross the wire.
 const LEASE_COLUMNS: &str =
@@ -2340,8 +2360,7 @@ impl PostgresCheckpointStore {
                     h.updated_at,
                     CASE WHEN c.schema_version IN ({ENCODED_VERSIONS_SQL})
                          THEN c.frozen_state->>'checkpoint_version' END AS checkpoint_version
-             FROM checkpoint_threads h
-             JOIN checkpoints c ON c.thread_id = h.thread_id AND c.sequence = h.sequence
+             {POSTGRES_THREAD_LISTING_FROM}
              {filter}
              ORDER BY h.updated_at DESC, h.thread_id DESC
              LIMIT {limit}"
@@ -2501,15 +2520,13 @@ impl PostgresCheckpointStore {
         limit: usize,
     ) -> Result<Vec<(String, i64)>, Failure> {
         let client = self.link.client().await?;
+        let sql = format!(
+            "SELECT h.thread_id, h.sequence FROM checkpoint_threads h
+             WHERE h.state = ANY($1) AND h.updated_at < $2 AND NOT {POSTGRES_HELD_BY_LIVE_LEASE}
+             ORDER BY h.updated_at, h.thread_id LIMIT $3"
+        );
         let rows = client
-            .query(
-                "SELECT h.thread_id, h.sequence FROM checkpoint_threads h
-                 WHERE h.state = ANY($1) AND h.updated_at < $2
-                   AND NOT EXISTS (
-                       SELECT 1 FROM checkpoint_leases l WHERE l.thread_id = h.thread_id AND l.expires_at > clock_timestamp())
-                 ORDER BY h.updated_at, h.thread_id LIMIT $3",
-                &[&names, &before, &(limit as i64)],
-            )
+            .query(&sql, &[&names, &before, &(limit as i64)])
             .await?;
         Ok(rows.iter().map(|row| (row.get(0), row.get(1))).collect())
     }
@@ -2524,14 +2541,13 @@ impl PostgresCheckpointStore {
         let mut client = self.link.client().await?;
         let tx = client.transaction().await?;
         tx.execute(THREAD_LOCK, &[&thread_id]).await?;
+        let delete_head = format!(
+            "DELETE FROM checkpoint_threads h
+             WHERE h.thread_id = $1 AND h.sequence = $2 AND h.state = ANY($3) AND h.updated_at < $4
+               AND NOT {POSTGRES_HELD_BY_LIVE_LEASE}"
+        );
         let head = tx
-            .execute(
-                "DELETE FROM checkpoint_threads h
-                 WHERE h.thread_id = $1 AND h.sequence = $2 AND h.state = ANY($3) AND h.updated_at < $4
-                   AND NOT EXISTS (
-                       SELECT 1 FROM checkpoint_leases l WHERE l.thread_id = h.thread_id AND l.expires_at > clock_timestamp())",
-                &[&thread_id, &sequence, &names, &before],
-            )
+            .execute(&delete_head, &[&thread_id, &sequence, &names, &before])
             .await?;
         if head == 0 {
             let _ = tx.rollback().await;

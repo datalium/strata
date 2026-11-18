@@ -15,7 +15,10 @@ use common::{PgSandbox, backend_url, fixture};
 use datalium_strata::checkpoint::{CheckpointQuery, CheckpointStore, ThreadQuery, ThreadState};
 use datalium_strata::history::{ChatMessage, HistoryStore, MessageRole};
 use datalium_strata::schema::Checkpoint;
-use datalium_strata_memory::postgres_store::{PostgresCheckpointStore, PostgresHistoryStore};
+use datalium_strata_memory::postgres_store::{
+    POSTGRES_HELD_BY_LIVE_LEASE, POSTGRES_THREAD_LISTING_FROM, PostgresCheckpointStore,
+    PostgresHistoryStore,
+};
 use serde_json::{Value, json};
 
 fn frozen_fixture() -> Checkpoint {
@@ -220,6 +223,73 @@ async fn the_tables_match_the_shared_column_fixtures() {
             fixture("checkpoint-log/postgres-threads-columns.json")
         );
     });
+}
+
+/// A listing joins the head table to the log, and a purge looks for a live
+/// lease, by `thread_id` across two collations: the head table's `"C"` and the
+/// database's. Each must stay one lookup in the other table's primary key, or
+/// a page of a listing joins every matching thread and a purge scans every
+/// lease for each candidate. With every other way to join turned off, a
+/// comparison the key can't answer leaves `thread_id` out of the scan's index
+/// condition: a sequential scan, or the whole key read for `sequence` alone.
+#[tokio::test]
+async fn the_listing_and_the_purge_look_up_each_thread_in_the_primary_key() {
+    let Some(url) = backend_url(common::POSTGRES_VAR) else {
+        return;
+    };
+    let sandbox = PgSandbox::new(&url, "listing_plan");
+    drop(store(&sandbox).await);
+
+    sandbox.admin(|client| {
+        client
+            .batch_execute(
+                "SET enable_seqscan = off; SET enable_hashjoin = off; SET enable_mergejoin = off",
+            )
+            .unwrap();
+        let mut plan = |sql: String| -> Value {
+            let row = client
+                .query_one(&format!("EXPLAIN (FORMAT JSON) {sql}"), &[])
+                .unwrap();
+            row.get(0)
+        };
+        let listing = plan(format!(
+            "SELECT c.thread_id, c.sequence {POSTGRES_THREAD_LISTING_FROM}
+             WHERE h.state = 'interrupted' ORDER BY h.updated_at DESC, h.thread_id DESC LIMIT 1001"
+        ));
+        let purge = plan(format!(
+            "SELECT h.thread_id FROM checkpoint_threads h
+             WHERE h.state = 'completed' AND NOT {POSTGRES_HELD_BY_LIVE_LEASE}
+             ORDER BY h.updated_at, h.thread_id LIMIT 1000"
+        ));
+
+        assert!(
+            index_condition(&listing, "checkpoints").is_some_and(|cond| cond.contains("thread_id")),
+            "{listing}"
+        );
+        assert!(
+            index_condition(&purge, "checkpoint_leases")
+                .is_some_and(|cond| cond.contains("thread_id")),
+            "{purge}"
+        );
+    });
+}
+
+/// The index condition of `plan`'s scan of `relation`, if it has one.
+fn index_condition<'a>(plan: &'a Value, relation: &str) -> Option<&'a str> {
+    match plan {
+        Value::Object(node)
+            if node.get("Relation Name").and_then(Value::as_str) == Some(relation) =>
+        {
+            node.get("Index Cond").and_then(Value::as_str)
+        }
+        Value::Object(node) => node
+            .values()
+            .find_map(|child| index_condition(child, relation)),
+        Value::Array(children) => children
+            .iter()
+            .find_map(|child| index_condition(child, relation)),
+        _ => None,
+    }
 }
 
 #[tokio::test]
