@@ -21,12 +21,13 @@ public sealed class AllocationTests(ITestOutputHelper output)
 {
     private sealed record Work(int Step);
 
-    // Each handler yields, as a handler that awaits real work does, so what suspending costs counts too.
-    private static async ValueTask<Work> Step(Work work, NodeContext _, CancellationToken ct)
-    {
-        await Task.Yield();
-        return work with { Step = work.Step + 1 };
-    }
+    // Each handler completes at once, so the whole run stays on the test's thread and allocates the same on
+    // every run and every machine. A handler that yields would add what suspending costs, but how much
+    // depends on where the thread pool runs each continuation: on Linux CI a branch varied by 230 bytes
+    // between runs. What a node and a branch allocate for nothing (a key, a token source, a closure)
+    // they allocate either way.
+    private static ValueTask<Work> Step(Work work, NodeContext _, CancellationToken ct) =>
+        ValueTask.FromResult(work with { Step = work.Step + 1 });
 
     private static CompiledGraph<Work> Line(int nodes)
     {
@@ -91,14 +92,15 @@ public sealed class AllocationTests(ITestOutputHelper output)
         var perBranch = (nineBranches - oneBranch) / 8.0;
         output.WriteLine($"a node: {perNode:0} bytes; a branch: {perBranch:0} bytes; a run of one node: {shortLine - (10 * perNode):0} bytes");
 
-        // On .NET 10 a node allocates about 1,390 bytes and a branch about 995, most of it the state machines
-        // and the task a handler that yields needs. The limits leave room for the runtime to change by a little,
-        // not for a token source (about 200 bytes) or an idempotency key built for nobody (about 150).
+        // On .NET 10 a node allocates 728 bytes and a branch 943 (1,008 and 1,307 before design/49), most of it
+        // the engine's state machines, contexts and outcomes, and the same on Windows and Linux. The limits leave
+        // room for the runtime to change by a few dozen bytes, not for a token source (64 bytes or more) or an
+        // idempotency key built for nobody (about 110).
         Assert.True(perNode <= NodeLimit, $"a node allocated {perNode:0} bytes; the limit is {NodeLimit}");
         Assert.True(perBranch <= BranchLimit, $"a branch allocated {perBranch:0} bytes; the limit is {BranchLimit}");
     }
 
-    private const double NodeLimit = 1500;
+    private const double NodeLimit = 760;
 
-    private const double BranchLimit = 1100;
+    private const double BranchLimit = 980;
 }

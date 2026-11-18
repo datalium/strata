@@ -15,7 +15,7 @@ It is written after the first part, as a record. "Review decisions" lists what t
 | Why is a burst slower than plain code? | **Memory per run in flight, not CPU.** .NET spent 55–90% of the burst's wall time in GC pauses; Rust's burst was held up by Windows' default allocator. The engine's own code was about 1% of the CPU samples per method. |
 | Is it the engine or the runtime? | **Both.** The runtime's default throttles: .NET's DATAS kept the server GC at one to three heaps of 24, and Windows' heap serialized Rust's allocations. What it throttles on is what each run holds: in .NET 14.8 KB per run waiting in its branches, against 3.9 KB for plain code; in Rust 25.7 KB against 3.3 KB. |
 | What changed? | **The bytes a node and a branch allocate for nothing.** In .NET: the idempotency key is built when a handler reads it, an attempt has a token of its own only when it has a timeout, and the subgraph-only closure is made only for a subgraph. In both: a branch without a timeout watches its siblings' token, and a group's branch names are made once. In Rust: a branch without a timeout has no timer in its task. |
-| What does it save? | **In .NET, a node allocates about 1,390 bytes instead of 1,860, and a branch 995 instead of 1,425; in Rust a branch makes 9 allocations instead of 12.** The burst allocates 24.2 KB a run instead of 29.5 in .NET, and 138.9 allocations instead of 159.9 in Rust; with DATAS off, .NET's 100,000-run burst went from 66,000–81,000 to 92,000 runs a second. |
+| What does it save? | **In .NET, a node allocates 728 bytes instead of 1,008, and a branch 943 instead of 1,307; in Rust a branch makes 9 allocations instead of 12.** The burst allocates 24.2 KB a run instead of 29.5 in .NET, and 138.9 allocations instead of 159.9 in Rust; with DATAS off, .NET's 100,000-run burst went from 66,000–81,000 to 92,000 runs a second. |
 | Does anything an application sees change? | **No API, no wire format, no event, span or metric.** The idempotency key is the same string, read when it's read. A branch's token can't be cancelled from .NET, and a Rust handler's token is a child of the branch's, so sharing the siblings' token can't be told apart. |
 | What keeps it from coming back? | **A test in each engine that counts what a node and a branch allocate.** Bytes in .NET, allocations in Rust: the same on every machine, unlike a timing. |
 | What should a host that runs bursts do? | **Turn DATAS off (.NET) or use a faster allocator (Rust)**, after measuring: "Hosting a burst". The engine can't choose either for the application. |
@@ -144,8 +144,8 @@ Each run of a group made the list of its branch names: in Rust a new `Vec<String
 
 | | Before | Now |
 |---|---:|---:|
-| .NET, a node (async handler that yields) | about 1,860 bytes | about 1,390 bytes |
-| .NET, a branch (async handler that yields) | about 1,425 bytes | about 995 bytes |
+| .NET, a node (async handler that completes at once) | 1,008 bytes | 728 bytes |
+| .NET, a branch (async handler that completes at once) | 1,307 bytes | 943 bytes |
 | Rust, an async branch | 11.9 allocations | 9.2 allocations |
 | .NET burst, allocated a run | 29.5 KB | 24.2 KB |
 | .NET burst, held a run waiting in its branches | 14.8 KB | 12.6 KB |
@@ -188,7 +188,7 @@ None. The API is the same in both engines.
 
 ## Tests
 
-- **What a node and a branch allocate is measured** (`dotnet/tests/Datalium.Strata.Tests/AllocationTests.cs`, alone in its collection because it reads the process's allocations). The fewest bytes of five warm runs of a line of 11 and of 101 nodes, and of a group of 1 and of 9 branches, whose handlers yield. A node may allocate 1,500 bytes (it allocates about 1,390), a branch 1,100 (about 995). Building the key eagerly again fails it (1,523 bytes a node), and so do a linked token source per attempt (1,616) and per branch (1,280).
+- **What a node and a branch allocate is measured** (`dotnet/tests/Datalium.Strata.Tests/AllocationTests.cs`, alone in its collection because it reads the process's allocations). The fewest bytes of five warm runs of a line of 11 and of 101 nodes, and of a group of 1 and of 9 branches, whose handlers complete at once, so the run stays on the test's thread. A node may allocate 760 bytes (it allocates 728), a branch 980 (943), the same on Windows and Linux. Building the key eagerly again fails it (840 bytes a node), and so do a linked token source per attempt (792) and per branch (1,117).
 - **What a branch allocates is counted** (`rust/strata-bench/tests/allocations.rs`): an async branch may make 10 allocations (it makes 9.2). A child token per branch again fails it (10.9).
 - **The idempotency key is the node's when it is read late** (`NodeContextTests`, the twin of `rust/strata-core/tests/node_context.rs`): read after the run, a node's and a branch's keys are what they were. A context built by hand has an empty key, or the one it was given.
 - Everything else is the existing suite, which is what says the behaviour is the same: branch timeouts, sibling cancellation, joins, maps winding down, retries, durable execution's keys, events and spans.
@@ -219,6 +219,7 @@ The first part built 2026-11-18, in both engines.
 **Where it diverged, or filled a gap, and why:**
 
 - **The .NET test measures bytes; the Rust test counts allocations.** .NET has no count of allocations, only bytes, which are the same on every machine for one runtime.
+- **The .NET test's handlers complete at once.** It first had them yield, as a handler that awaits real work does. That measured what suspending costs too, but not the same way twice: on Linux a branch varied between 922 and 1,177 bytes from run to run, depending on where the thread pool ran each continuation. What a node and a branch allocate for nothing they allocate either way.
 - **No CPU profile of the Rust engine**, for the reason in "How it was measured".
 - **The burst's numbers are from repro programs kept outside the repository.** They're the issue's program and its variants, not part of `strata-bench`.
 
