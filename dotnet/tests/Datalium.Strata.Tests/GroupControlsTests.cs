@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using Datalium.Strata.Graph;
 using Datalium.Strata.Interruption;
 using Datalium.Strata.Observability;
@@ -324,6 +325,164 @@ public class GroupControlsTests
             ],
             Branches(events));
         Assert.False(sawCancellation());
+    }
+
+    /// <summary>
+    /// Never finishes, and ignores its token: the group has to give up on it by itself
+    /// (<c>design/49-Burst-Throughput.md</c>). <paramref name="started"/>, when given, is set once it runs.
+    /// </summary>
+    private static Func<Job, NodeContext, CancellationToken, ValueTask<Job>> Stuck(TaskCompletionSource? started = null) =>
+        (_, _, _) =>
+        {
+            started?.TrySetResult();
+            return new ValueTask<Job>(new TaskCompletionSource<Job>().Task);
+        };
+
+    [Fact]
+    public async Task A_Branch_That_Ignores_Its_Token_Still_Times_Out()
+    {
+        var clock = new FakeTimeProvider();
+        var seen = new ConcurrentQueue<BranchOutcomes<Job>>();
+        var graph = Group(
+            new ParallelBranches<Job>()
+                .Branch("telemetry", Succeeds("telemetry"))
+                .Branch("kubernetes", Stuck()),
+            new ParallelGroupOptions<Job> { BranchTimeout = TimeSpan.FromSeconds(45), Partial = PartialResults.KeepSucceeded },
+            seen);
+
+        var (result, events) = await Run(graph, clock);
+
+        Assert.Equal(["telemetry"], Assert.IsType<GraphExecutionResult<Job>.Completed>(result).State.Trail);
+        Assert.Equal(BranchStatus.TimedOut, Assert.Single(seen)["kubernetes"]!.Status);
+        Assert.Equal(
+            [
+                ("Investigate/kubernetes", BranchResult.Failed, BranchEndReason.TimedOut),
+                ("Investigate/telemetry", BranchResult.Succeeded, null),
+            ],
+            Branches(events));
+    }
+
+    [Fact]
+    public async Task A_Branch_That_Ignores_Its_Token_Is_Given_Up_On_When_A_Sibling_Fails()
+    {
+        var graph = new StateGraph<Job>()
+            .AddParallelGroup(
+                "Investigate",
+                new ParallelBranches<Job>()
+                    .Branch("a", Fails(NodeException.Fatal("bad query")))
+                    .Branch("b", Stuck()),
+                (entry, _) => entry)
+            .Compile();
+
+        var (result, events) = await Run(graph);
+
+        Assert.Equal("branch 'a': bad query", Assert.IsType<GraphExecutionResult<Job>.NodeFailed>(result).Message);
+        Assert.Equal(
+            [
+                ("Investigate/a", BranchResult.Failed, null),
+                ("Investigate/b", BranchResult.Cancelled, BranchEndReason.SiblingFailed),
+            ],
+            Branches(events));
+    }
+
+    /// <summary>
+    /// The run ends at once, since the executor stops waiting for the group, and the group still gives up on
+    /// the branch and ends its span, though the branch never finishes. No Rust twin yet: there the run can end
+    /// failed instead of cancelled, a bug of its own (#48).
+    /// </summary>
+    [Fact]
+    public async Task A_Run_Cancelled_While_A_Branch_Ignores_Its_Token_Ends_At_Once_And_Ends_The_Branch()
+    {
+        var threadId = $"stuck-{Guid.NewGuid():N}";
+        var stopped = new ConcurrentQueue<Activity>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == StrataTelemetry.Name,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = stopped.Enqueue,
+        };
+        ActivitySource.AddActivityListener(listener);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var graph = new StateGraph<Job>()
+            .AddParallelGroup("Investigate", new ParallelBranches<Job>().Branch("b", Stuck(started)), (entry, _) => entry)
+            .Compile();
+        using var cancel = new CancellationTokenSource();
+
+        var run = graph.RunAsync(threadId, NewJob(), new InMemoryCheckpointStore(), cancel.Token);
+        await started.Task.WaitAsync(Patience);
+        await cancel.CancelAsync();
+
+        Assert.IsType<GraphExecutionResult<Job>.Cancelled>(await run.WaitAsync(Patience));
+        var deadline = DateTime.UtcNow + Patience;
+        while (!stopped.Any(a => a.OperationName == "strata.branch" && a.DisplayName == "Investigate/b"
+                                 && (string?)a.GetTagItem("strata.thread_id") == threadId))
+        {
+            Assert.True(DateTime.UtcNow < deadline, "the stuck branch's span never ended");
+            await Task.Delay(10);
+        }
+    }
+
+    /// <summary>
+    /// A branch the group gave up on may fail long after: its exception is still observed, so it never
+    /// surfaces as <see cref="TaskScheduler.UnobservedTaskException"/>. .NET only: a Rust future the group
+    /// gives up on is dropped.
+    /// </summary>
+    [Fact]
+    public async Task A_Late_Failure_Of_A_Branch_Given_Up_On_Is_Observed()
+    {
+        var marker = $"late failure {Guid.NewGuid()}";
+        var unobserved = new ConcurrentQueue<AggregateException>();
+        void Watch(object? sender, UnobservedTaskExceptionEventArgs e)
+        {
+            if (e.Exception.InnerExceptions.Any(x => x.Message == marker))
+            {
+                unobserved.Enqueue(e.Exception);
+            }
+        }
+
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var ended = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var graph = new StateGraph<Job>()
+            .AddParallelGroup(
+                "Investigate",
+                new ParallelBranches<Job>()
+                    .Branch("a", Fails(NodeException.Fatal("bad query")))
+                    .Branch("b", async (_, _, _) =>
+                    {
+                        try
+                        {
+                            await release.Task;
+                            throw new InvalidOperationException(marker);
+                        }
+                        finally
+                        {
+                            ended.TrySetResult();
+                        }
+                    }),
+                (entry, _) => entry)
+            .Compile();
+
+        TaskScheduler.UnobservedTaskException += Watch;
+        try
+        {
+            var (result, _) = await Run(graph);
+            Assert.IsType<GraphExecutionResult<Job>.NodeFailed>(result);
+
+            release.SetResult();
+            await ended.Task.WaitAsync(Patience);
+            await Task.Delay(100);
+            for (var i = 0; i < 3; i++)
+            {
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+            }
+
+            Assert.Empty(unobserved);
+        }
+        finally
+        {
+            TaskScheduler.UnobservedTaskException -= Watch;
+        }
     }
 
     [Fact]

@@ -92,7 +92,7 @@ public sealed class AllocationTests(ITestOutputHelper output)
         var perBranch = (nineBranches - oneBranch) / 8.0;
         output.WriteLine($"a node: {perNode:0} bytes; a branch: {perBranch:0} bytes; a run of one node: {shortLine - (10 * perNode):0} bytes");
 
-        // On .NET 10 a node allocates 728 bytes and a branch 943 (1,008 and 1,307 before design/49), most of it
+        // On .NET 10 a node allocates 728 bytes and a branch 707 (1,008 and 1,307 before design/49), most of it
         // the engine's state machines, contexts and outcomes, and the same on Windows and Linux. The limits leave
         // room for the runtime to change by a few dozen bytes, not for a token source (64 bytes or more) or an
         // idempotency key built for nobody (about 110).
@@ -102,5 +102,5 @@ public sealed class AllocationTests(ITestOutputHelper output)
 
     private const double NodeLimit = 760;
 
-    private const double BranchLimit = 980;
+    private const double BranchLimit = 740;
 }

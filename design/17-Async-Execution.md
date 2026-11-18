@@ -382,7 +382,7 @@ Built 2026-10-01 in both engines, in one change, as specified above. These are t
   - `Graph/NodeContext.cs` and `Graph/RunOptions.cs` hold the public types.
   - `Graph/Execution.cs` holds the plumbing: the stored `NodeHandler` shape, `NodeEntry`, `AttemptInputs`, the `RunScope` / `LevelScope` / `RootScope` token tree, and the sync-to-async wrappers.
   - The executor in `CompiledGraph.Interruption.cs` has one path for every node kind (`RunAttemptsAsync`, `AttemptAsync`, `CancelAt`).
-  - `ParallelGroupRunner.RunAsync` waits with `Task.WhenAny` and cancels a linked token on the first failure.
+  - `ParallelGroupRunner.RunAsync` waits with `Task.WhenAny` and cancels a linked token on the first failure. (Since `design/49-Burst-Throughput.md`, each branch reports how it settled to one inbox per fan-out, and only a branch with a timeout watches its timer; the rules are the same.)
   - `SubgraphRunner.RunAsync` runs the child at a `LevelScope` rooted at the attempt's token.
   - `GraphExecutionResult.Cancelled` and `CancelReason` sit beside the other results.
 - **Rust:**

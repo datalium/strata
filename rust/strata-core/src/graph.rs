@@ -1309,7 +1309,7 @@ where
             );
             Box::pin(async move {
                 let entry = state.clone();
-                run_branches(&group, &branches, &names, &options, state, inputs)
+                run_branches(&group, &branches, &names, &options, state, &inputs)
                     .await
                     .map(|results| Step::Done(reducer(&entry, results)))
                     .map_err(AttemptError::from)

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.ExceptionServices;
+using System.Threading.Tasks.Sources;
 using Datalium.Strata.Observability;
 
 namespace Datalium.Strata.Graph;
@@ -48,8 +49,8 @@ internal sealed record FanOutSettings<TResult>(
 /// </summary>
 internal static class FanOutRunner
 {
-    /// <summary>How one branch settled, as its wrapper task reports it: it never throws.</summary>
-    private sealed record Settled<TResult>(BranchStatus Status, TResult? State, NodeException? Error, Exception? Bug);
+    /// <summary>How one branch settled, as its <see cref="Branch{TResult}"/> reports it to the fan-out.</summary>
+    private readonly record struct Settled<TResult>(BranchStatus Status, TResult? State, NodeException? Error, Exception? Bug);
 
     /// <summary>
     /// Starts the branches, at most <see cref="FanOutSettings{TResult}.MaxConcurrency"/> at a time, in
@@ -101,11 +102,17 @@ internal static class FanOutRunner
 
         using var siblings = CancellationTokenSource.CreateLinkedTokenSource(inputs.Token);
 
+        // Where the branches report how they settled, and the one registration that wakes the loop when
+        // the attempt's token fires (design/49-Burst-Throughput.md).
+        var inbox = new Inbox<TResult>(count);
+        using var wake = inputs.Token.UnsafeRegister(static state => ((Inbox<TResult>)state!).Cancel(), inbox);
+
         // A branch's own timer and token, only when branches have a timeout.
         List<CancellationTokenSource>? sources = null;
         var outcomes = new BranchOutcome<TResult>?[count];
         var scopes = new BranchScope?[count];
-        var running = new Dictionary<Task<Settled<TResult>>, int>();
+        var running = new bool[count];
+        var inFlight = 0;
         var deciding = new List<int>();
         var next = 0;
         var counted = 0;
@@ -127,12 +134,18 @@ internal static class FanOutRunner
             }
 
             StartMore();
-            while (running.Count > 0)
+            while (inFlight > 0)
             {
-                var done = await Task.WhenAny(running.Keys).WaitAsync(inputs.Token).ConfigureAwait(false);
+                await inbox.WaitAsync(cancellable: true).ConfigureAwait(false);
                 inputs.Token.ThrowIfCancellationRequested();
-                running.Remove(done, out var index);
-                Record(index, done.Result);
+                if (!inbox.TryTake(out var index, out var settled))
+                {
+                    continue;
+                }
+
+                running[index] = false;
+                inFlight--;
+                Record(index, settled);
 
                 if (!decided && counted >= needed)
                 {
@@ -142,7 +155,7 @@ internal static class FanOutRunner
                     break;
                 }
 
-                if (!decided && counted + running.Count + (count - next) < needed)
+                if (!decided && counted + inFlight + (count - next) < needed)
                 {
                     decided = true;
                     Decide(met: false);
@@ -190,10 +203,12 @@ internal static class FanOutRunner
 
         void StartMore()
         {
-            while (startMore && next < count && running.Count < limit)
+            while (startMore && next < count && inFlight < limit)
             {
                 var index = next++;
-                running.Add(Start(index), index);
+                running[index] = true;
+                inFlight++;
+                Start(index);
             }
         }
 
@@ -201,8 +216,8 @@ internal static class FanOutRunner
         // as current; the fan-out's span is current again once it has started. Its token is the
         // siblings' one, plus its own timeout on the run's clock when there is one. Without a timeout
         // nothing cancels a branch apart from its siblings, so it watches the siblings' token itself
-        // (design/49-Burst-Throughput.md).
-        Task<Settled<TResult>> Start(int index)
+        // (design/49-Burst-Throughput.md). The branch reports to the inbox once it has settled.
+        void Start(int index)
         {
             CancellationTokenSource? timer = null;
             var token = siblings.Token;
@@ -232,7 +247,7 @@ internal static class FanOutRunner
                 Activity.Current = groupActivity;
             }
 
-            return Settle(names[index], task, token, timer, siblings.Token, settings);
+            new Branch<TResult>(inbox, index, names[index], task, token, timer, siblings.Token, settings).Watch();
         }
 
         // Counts a settled branch towards the join and ends its scope.
@@ -297,10 +312,18 @@ internal static class FanOutRunner
             startMore = false;
             RecordSettled();
             siblings.Cancel();
-            if (settings.WindsDown && running.Count > 0)
+            if (settings.WindsDown)
             {
-                // Settle never throws.
-                await Task.WhenAll(running.Keys).ConfigureAwait(false);
+                // Each one still running reports once it has stopped, whatever stopped it. The attempt's
+                // token doesn't end this wait: what it cancelled is what is being waited for.
+                for (var stopping = inFlight; stopping > 0;)
+                {
+                    await inbox.WaitAsync(cancellable: false).ConfigureAwait(false);
+                    while (inbox.TryTake(out _, out _))
+                    {
+                        stopping--;
+                    }
+                }
             }
 
             ReportCancelled(reason);
@@ -315,27 +338,46 @@ internal static class FanOutRunner
             ReportCancelled(reason);
         }
 
+        // The branches that had settled when the fan-out looked count as what they were, recorded in
+        // declaration order whatever order they settled in; a bug among them is left unreported.
         void RecordSettled()
         {
-            foreach (var (task, index) in running.Where(r => r.Key.IsCompleted).ToList())
+            List<(int Index, Settled<TResult> Settled)>? settled = null;
+            while (inbox.TryTake(out var index, out var outcome))
             {
-                running.Remove(task);
-                if (task.Result.Bug is null)
+                (settled ??= []).Add((index, outcome));
+            }
+
+            if (settled is null)
+            {
+                return;
+            }
+
+            settled.Sort(static (a, b) => a.Index.CompareTo(b.Index));
+            foreach (var (index, outcome) in settled)
+            {
+                running[index] = false;
+                inFlight--;
+                if (outcome.Bug is null)
                 {
-                    Record(index, task.Result);
+                    Record(index, outcome);
                 }
             }
         }
 
         void ReportCancelled(BranchEndReason? reason)
         {
-            foreach (var index in running.Values)
+            for (var index = 0; index < count; index++)
             {
-                scopes[index]!.Completed(BranchResult.Cancelled, error: null, reason);
-                outcomes[index] = new BranchOutcome<TResult> { Name = names[index], Status = BranchStatus.Cancelled };
+                if (running[index])
+                {
+                    running[index] = false;
+                    scopes[index]!.Completed(BranchResult.Cancelled, error: null, reason);
+                    outcomes[index] = new BranchOutcome<TResult> { Name = names[index], Status = BranchStatus.Cancelled };
+                }
             }
 
-            running.Clear();
+            inFlight = 0;
         }
     }
 
@@ -383,13 +425,18 @@ internal static class FanOutRunner
     };
 
     /// <summary>
-    /// Waits for one branch, resolved to how it settled. A branch that is abandoned stops being waited
-    /// for the moment its token fires; one that winds down is waited for until it has stopped, and
-    /// counts as stopped by its token if it didn't succeed. Either way, its own timeout makes it
+    /// One started branch, as its fan-out watches it (<c>design/49-Burst-Throughput.md</c>): it reports how the
+    /// branch settled to the fan-out's <see cref="Inbox{TResult}"/>, once, when the branch's task completes.
+    /// A branch that is abandoned rather than waited for, and has a timeout, is also reported the moment its
+    /// timeout fires, though its handler may run on. One that winds down (a map's item) is waited for until it
+    /// has stopped, and counts as stopped by its token if it didn't succeed. Either way, its own timeout makes it
     /// <see cref="BranchStatus.TimedOut"/> (a transient failure), and anything else that fired its token
-    /// <see cref="BranchStatus.Cancelled"/>.
+    /// <see cref="BranchStatus.Cancelled"/>. The task's result is always taken when it completes, so a late
+    /// exception from a branch given up on is observed.
     /// </summary>
-    private static async Task<Settled<TResult>> Settle<TResult>(
+    private sealed class Branch<TResult>(
+        Inbox<TResult> inbox,
+        int index,
         string name,
         Task<TResult> task,
         CancellationToken token,
@@ -397,21 +444,63 @@ internal static class FanOutRunner
         CancellationToken siblings,
         FanOutSettings<TResult> settings)
     {
-        try
+        // 1 once the branch has been reported: whichever of its completion and its timeout comes first.
+        private int _reported;
+
+        // The branch's timeout, watched only when it is abandoned rather than waited for.
+        private CancellationTokenRegistration _timeout;
+
+        /// <summary>
+        /// Reports the branch at once if its task has already completed, as a synchronous handler's has, so
+        /// the fan-out sees it in the order it started; otherwise when it completes, or its timeout fires.
+        /// </summary>
+        public void Watch()
         {
-            var result = settings.WindsDown
-                ? await task.ConfigureAwait(false)
-                : await task.WaitAsync(token).ConfigureAwait(false);
-            return new(BranchStatus.Succeeded, result, null, null);
-        }
-        catch (Exception ex) when (token.IsCancellationRequested && (settings.WindsDown || ex is OperationCanceledException))
-        {
-            if (!task.IsCompleted)
+            if (task.IsCompleted)
             {
-                NodeHandlers.Abandon(task);
+                OnCompleted();
+                return;
             }
 
-            return timer is { IsCancellationRequested: true } && !siblings.IsCancellationRequested
+            if (timer is not null && !settings.WindsDown)
+            {
+                _timeout = timer.Token.UnsafeRegister(static state => ((Branch<TResult>)state!).OnTimedOut(), this);
+            }
+
+            task.ConfigureAwait(false).GetAwaiter().UnsafeOnCompleted(OnCompleted);
+        }
+
+        private void OnCompleted()
+        {
+            // Unregister, not Dispose: Dispose would wait for a timeout callback already running, which may
+            // be running the fan-out's loop. The first report wins either way.
+            _timeout.Unregister();
+            Settled<TResult> settled;
+            try
+            {
+                settled = new(BranchStatus.Succeeded, task.GetAwaiter().GetResult(), null, null);
+            }
+            catch (Exception ex) when (token.IsCancellationRequested && (settings.WindsDown || ex is OperationCanceledException))
+            {
+                settled = Stopped();
+            }
+            catch (NodeException ex)
+            {
+                settled = new(BranchStatus.Failed, default, ex, null);
+            }
+            catch (Exception ex)
+            {
+                // Not a NodeException, so not recovery-managed: propagate like a plain node's bug would.
+                settled = new(BranchStatus.Failed, default, null, ex);
+            }
+
+            Report(settled);
+        }
+
+        private void OnTimedOut() => Report(Stopped());
+
+        private Settled<TResult> Stopped() =>
+            timer is { IsCancellationRequested: true } && !siblings.IsCancellationRequested
                 ? new(
                     BranchStatus.TimedOut,
                     default,
@@ -419,15 +508,111 @@ internal static class FanOutRunner
                         $"{settings.Noun.One} '{name}' timed out after {(long)settings.Timeout!.Value.TotalMilliseconds} ms"),
                     null)
                 : new(BranchStatus.Cancelled, default, null, null);
-        }
-        catch (NodeException ex)
+
+        private void Report(Settled<TResult> settled)
         {
-            return new(BranchStatus.Failed, default, ex, null);
+            if (Interlocked.Exchange(ref _reported, 1) == 0)
+            {
+                inbox.Post(index, settled);
+            }
         }
-        catch (Exception ex)
+    }
+
+    /// <summary>
+    /// Where a fan-out's branches report how they settled, in the order they did, and what its loop waits on
+    /// (<c>design/49-Burst-Throughput.md</c>). Each branch reports once, so it holds at most one report per
+    /// branch. The loop waits without allocating, on a source it resets each time; the attempt's token wakes
+    /// it through one registration for the whole fan-out.
+    /// </summary>
+    private sealed class Inbox<TResult>(int capacity) : IValueTaskSource
+    {
+        private readonly Lock _gate = new();
+        private readonly (int Index, Settled<TResult> Settled)[] _reports = new (int, Settled<TResult>)[capacity];
+        private int _head;
+        private int _tail;
+        private bool _waiting;
+        private bool _cancelled;
+
+        // A report wakes the loop on the reporting thread, as a completed task's continuation would.
+        private ManualResetValueTaskSourceCore<bool> _wait;
+
+        public void Post(int index, Settled<TResult> settled)
         {
-            // Not a NodeException, so not recovery-managed: propagate like a plain node's bug would.
-            return new(BranchStatus.Failed, default, null, ex);
+            bool wake;
+            lock (_gate)
+            {
+                _reports[_tail++] = (index, settled);
+                wake = _waiting;
+                _waiting = false;
+            }
+
+            if (wake)
+            {
+                _wait.SetResult(true);
+            }
         }
+
+        /// <summary>
+        /// The attempt's token fired. The loop is woken on the thread pool, not inside whatever cancelled the
+        /// token, since it goes on to end the node and maybe the run.
+        /// </summary>
+        public void Cancel()
+        {
+            bool wake;
+            lock (_gate)
+            {
+                _cancelled = true;
+                wake = _waiting;
+                _waiting = false;
+            }
+
+            if (wake)
+            {
+                ThreadPool.UnsafeQueueUserWorkItem(static inbox => inbox._wait.SetResult(true), this, preferLocal: false);
+            }
+        }
+
+        /// <summary>
+        /// Completes once a report is waiting, or, when <paramref name="cancellable"/>, once the attempt's token
+        /// has fired. Only the fan-out's loop calls it, never twice at once.
+        /// </summary>
+        public ValueTask WaitAsync(bool cancellable)
+        {
+            lock (_gate)
+            {
+                if (_head != _tail || (cancellable && _cancelled))
+                {
+                    return ValueTask.CompletedTask;
+                }
+
+                _wait.Reset();
+                _waiting = true;
+                return new ValueTask(this, _wait.Version);
+            }
+        }
+
+        public bool TryTake(out int index, out Settled<TResult> settled)
+        {
+            lock (_gate)
+            {
+                if (_head == _tail)
+                {
+                    (index, settled) = (-1, default);
+                    return false;
+                }
+
+                (index, settled) = _reports[_head];
+                _reports[_head++] = default;
+                return true;
+            }
+        }
+
+        void IValueTaskSource.GetResult(short token) => _wait.GetResult(token);
+
+        ValueTaskSourceStatus IValueTaskSource.GetStatus(short token) => _wait.GetStatus(token);
+
+        void IValueTaskSource.OnCompleted(
+            Action<object?> continuation, object? state, short token, ValueTaskSourceOnCompletedFlags flags) =>
+            _wait.OnCompleted(continuation, state, token, flags);
     }
 }
