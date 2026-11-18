@@ -14,12 +14,15 @@ use std::any::Any;
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::panic::AssertUnwindSafe;
-use std::sync::Arc;
+use std::pin::Pin;
+use std::sync::{Arc, OnceLock};
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
+use tracing::instrument::Instrumented;
 use tracing::{Instrument, Span};
 
 use crate::context::NodeContext;
@@ -517,7 +520,12 @@ impl<S> BranchOutcome<S> {
 pub struct BranchOutcomes<S> {
     outcomes: Vec<BranchOutcome<S>>,
     join_met: bool,
-    deciding: Vec<String>,
+    /// The deciding branches' indexes into `outcomes`, in the order they met
+    /// the join.
+    deciding_at: Vec<usize>,
+    /// Their names, made the first time [`Self::deciding`] is asked for: most
+    /// reducers never ask (`design/49-Burst-Throughput.md`).
+    deciding: OnceLock<Vec<String>>,
 }
 
 impl<S> BranchOutcomes<S> {
@@ -540,7 +548,12 @@ impl<S> BranchOutcomes<S> {
     /// a quorum's first `count`, every branch for `All`. Empty when the join
     /// wasn't met.
     pub fn deciding(&self) -> &[String] {
-        &self.deciding
+        self.deciding.get_or_init(|| {
+            self.deciding_at
+                .iter()
+                .map(|&index| self.outcomes[index].name.clone())
+                .collect()
+        })
     }
 
     /// The succeeded branches' states, in declaration order.
@@ -561,12 +574,14 @@ impl<S> BranchOutcomes<S> {
         let BranchOutcomes {
             outcomes,
             join_met,
-            deciding,
+            deciding_at,
+            ..
         } = self;
         outcomes
             .into_iter()
-            .filter(|outcome| !join_met || deciding.contains(&outcome.name))
-            .filter_map(|outcome| outcome.state)
+            .enumerate()
+            .filter(|(index, _)| !join_met || deciding_at.contains(index))
+            .filter_map(|(_, outcome)| outcome.state)
             .collect()
     }
 }
@@ -592,8 +607,43 @@ enum Settled<S> {
 /// What a branch's work resolves to: its result, or the panic it raised.
 type Finished<S> = Result<Result<S, NodeError>, Box<dyn Any + Send>>;
 
-/// One branch's work, resolved to its result or the panic it raised.
-pub(crate) type BranchWork<S> = BoxFuture<'static, Finished<S>>;
+pin_project_lite::pin_project! {
+    /// One branch's work, resolved to its result or the panic it raised. An
+    /// async branch's or a map item's future is held in place with its panic
+    /// caught around it, so the task that runs it holds it with no box of its
+    /// own (`design/49-Burst-Throughput.md`); a sync branch's is a boxed wait
+    /// on the blocking pool.
+    #[project = BranchWorkProjection]
+    pub(crate) enum BranchWork<S> {
+        Caught {
+            #[pin]
+            future: CatchUnwind<Instrumented<BoxFuture<'static, Result<S, NodeError>>>>,
+        },
+        Boxed {
+            future: BoxFuture<'static, Finished<S>>,
+        },
+    }
+}
+
+impl<S> BranchWork<S> {
+    /// `future`, with its panic caught.
+    pub(crate) fn caught(future: Instrumented<BoxFuture<'static, Result<S, NodeError>>>) -> Self {
+        Self::Caught {
+            future: CatchUnwind::new(future),
+        }
+    }
+}
+
+impl<S> Future for BranchWork<S> {
+    type Output = Finished<S>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match self.project() {
+            BranchWorkProjection::Caught { future } => future.poll(cx),
+            BranchWorkProjection::Boxed { future } => future.as_mut().poll(cx),
+        }
+    }
+}
 
 /// How a branch the fan-out stopped waiting on as it finished settled.
 fn as_settled<S>(finished: Finished<S>) -> Settled<S> {
@@ -672,7 +722,7 @@ where
     let handle = tokio::task::spawn_blocking(move || {
         std::panic::catch_unwind(AssertUnwindSafe(|| span.in_scope(work)))
     });
-    Box::pin(async move {
+    let future = Box::pin(async move {
         match handle.await {
             Ok(result) => result,
             Err(error) if error.is_panic() => Err(error.into_panic()),
@@ -680,7 +730,8 @@ where
                 "the runtime shut down while the branch was running".to_string(),
             ))),
         }
-    })
+    });
+    BranchWork::Boxed { future }
 }
 
 /// One run of a fan-out's branches: what is running, what has settled, and how
@@ -1013,14 +1064,11 @@ where
                     );
                     Some(run((*state).clone(), ctx))
                 };
-                let future = async move {
-                    match result {
-                        Some(future) => future.await,
-                        None => Err(no_stream()),
-                    }
-                }
-                .instrument(started.span);
-                Box::pin(CatchUnwind::new(future))
+                // The handler's future is boxed already: held as it is, not
+                // boxed again (design/49-Burst-Throughput.md).
+                let future =
+                    result.unwrap_or_else(|| Box::pin(std::future::ready(Err(no_stream()))));
+                BranchWork::caught(future.instrument(started.span))
             }
         }
     };
@@ -1179,11 +1227,8 @@ where
     }
 
     let met = run.met;
-    let deciding: Vec<String> = if met {
-        run.deciding
-            .iter()
-            .map(|index| names[*index].clone())
-            .collect()
+    let deciding_at = if met {
+        std::mem::take(&mut run.deciding)
     } else {
         Vec::new()
     };
@@ -1199,7 +1244,8 @@ where
     let results = BranchOutcomes {
         outcomes,
         join_met: met,
-        deciding,
+        deciding_at,
+        deciding: OnceLock::new(),
     };
     if met
         || (settings.partial == PartialResults::KeepSucceeded

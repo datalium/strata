@@ -2,7 +2,7 @@
 
 Issue #37 reported that a burst of runs whose handlers really wait gets through 3 to 5 times fewer runs a second than the same waits in plain async code. Each run was `Plan`, then a parallel group of 8 branches, then `Answer`, and every node and branch waited 20–80 ms, so ten waits a run, against the in-memory store. Without the waits, the same graph ran half a million times a second, so the engine's own work per node wasn't the explanation.
 
-This document is the follow-up: what the time went on in both engines, what was changed, and what is left. The work was in two parts, both built: the small changes first (#46), then a new wait for a .NET group's branches. The second part also tried smaller Rust futures, which held less but ran slower, so it didn't keep them ("Tried and not kept").
+This document is the follow-up: what the time went on in both engines, what was changed, and what is left. The work was in three parts, all built: the small changes first (#46); then a new wait for a .NET group's branches (#47), which also tried smaller Rust futures and didn't keep them ("Tried and not kept"); then a CPU profile of the Rust engine, and the two allocations a branch made for nothing that it found ("The Rust CPU profile").
 
 It is written after the work, as a record. "Review decisions" lists what the build chose and what it left for review.
 
@@ -20,7 +20,8 @@ It is written after the work, as a record. "Review decisions" lists what the bui
 | Does anything an application sees change? | **No API, no wire format, no event, span or metric.** The idempotency key is the same string, read when it's read. A branch's token can't be cancelled from .NET, and a Rust handler's token is a child of the branch's, so sharing the siblings' token can't be told apart. A .NET group reports, times out and gives up on its branches as before. |
 | What keeps it from coming back? | **A test in each engine that counts what a node and a branch allocate.** Bytes in .NET, allocations in Rust: the same on every machine, unlike a timing. |
 | What should a host that runs bursts do? | **Turn DATAS off (.NET) or use a faster allocator (Rust)**, after measuring: "Hosting a burst". The engine can't choose either for the application. |
-| What is left? | **What a Rust run allocates and how its tasks are scheduled, a smaller `NodeContext`, and a Rust bug the new tests found**: "What is left". |
+| What limits Rust's burst? | **The C allocator, then tokio.** On Linux, glibc's `malloc` is about 40% of the engine's CPU in the burst: its own code, `mprotect` as it grows its heaps, and contention on its locks. mimalloc makes the burst 1.6 times faster. The rest is spread over a task per branch, the engine's own code, `tracing` and tokens, with no hotspot. Plain code is bound by tokio's timer lock, at about 10 of 24 cores. |
+| What is left? | **Nothing for #37.** A task per branch and a smaller `NodeContext` were considered and not pursued: "What is left". |
 
 ---
 
@@ -178,6 +179,31 @@ The burst got slower all the same:
 
 Under mimalloc it was faster (a million runs: 98,000 to 107,000 runs a second). Undoing any one of the three boxes didn't bring the rate back. Adding 4,400 bytes of padding to each task of the boxed build did: 71,000–72,000 runs a second on Windows, 57,000 on Linux. So the slowdown came from each run's task being smaller, through how the allocator and the scheduler handled it, not from work the engine did. The boxes aren't kept: #37 is about the rate, and what a Rust run holds isn't what limits it. Measured 2026-11-18; the numbers are in "What a run costs now".
 
+### The Rust CPU profile, and a branch's two allocations
+
+A CPU profile of the Rust burst, taken after the second part with `perf` (`--call-graph dwarf`, 999 Hz) in a Linux container: Rust 1.91, glibc 2.36. The container had the `PERFMON`, `SYS_PTRACE` and `SYSLOG` capabilities, so it needed no elevated shell on the host. Each sample was attributed to the nearest meaningful frame on its stack: tokio's timers, tokio's scheduler, a cancellation token, the engine, or the workload's handlers.
+
+- **Plain code is bound by tokio's timer driver.** A third of its samples are a contended mutex, and 45% are timer handling (`Sleep::poll`, `clear_entry`, `reregister`). In the kernel that is futex spinning. It keeps about 10 of the 24 cores busy, at about 92 µs of CPU a run.
+- **The engine's burst is bound by the allocator.** About 22% of its samples are in glibc itself (`malloc`, `free`). In the kernel, 10% are `mprotect`, which glibc calls as it grows a thread's heap, contending on the process's memory-map lock (`osq_lock`, `rwsem_spin_on_owner`). About 7% are futex calls on glibc's arena locks (`__lll_lock_wake_private`), and 3.5% are page faults on new memory. Together that is about 40% of the engine's CPU, which is about 190 µs a run.
+- **The rest is spread out.** Of the engine's samples, about 22% are tokio's scheduler and the task each branch runs as (creating, waking, joining it), 16% `tracing`'s wrappers and other code, 5% cancellation tokens, and the engine's own code the rest, with no function above a few percent.
+
+The allocator, swapped on the same build (100,000 runs at once, three runs each):
+
+| Allocator | strata | plain |
+|:--|--:|--:|
+| glibc | 50,000–55,500 runs/s, 180–200 µs of CPU a run | 111,000–116,000 runs/s |
+| glibc, `GLIBC_TUNABLES=glibc.malloc.top_pad=268435456:glibc.malloc.trim_threshold=1073741824` | 57,000 runs/s, 170–175 µs | 113,000–116,000 runs/s |
+| mimalloc | 73,000–83,000 runs/s, 130–150 µs | 136,000–138,000 runs/s |
+
+A million runs: 49,600 a second on glibc, 82,800 on mimalloc.
+
+Counted by call site, a branch made two allocations for nothing:
+
+- **A second box.** An async branch's handler returns a boxed future. The fan-out wrapped it to catch its panic and boxed the wrapper again, because a branch's work was a boxed future of any kind. It is now an enum: the handler's future held in place with its panic caught around it, or a sync branch's boxed wait on the blocking pool. A map's item takes the first form too.
+- **A copy of each deciding branch's name.** `BranchOutcomes` held the names of the branches that met the join as a `Vec<String>`, copied from the group's names on every run; under `All` that is every branch. It now holds their indexes, and builds the names the first time `deciding()` is read, as the idempotency key is built. A reducer that reads them sees the same list.
+
+That made a run 120.9 allocations instead of 137.9, and a branch 7.2 instead of 9.2. The rate barely moved. On Windows' allocator it rose by about 1–2% (72,500–73,700 runs a second, against 69,700–74,000), and on Linux it stayed within run-to-run noise with either allocator: 17 allocations of about 120 don't decide how fast glibc serves them.
+
 ---
 
 ## What a run costs now
@@ -196,6 +222,8 @@ Under mimalloc it was faster (a million runs: 98,000 to 107,000 runs a second). 
 | Rust burst, held a run waiting in its branches | 25.7 KB | 22.6 KB | 21.7 KB |
 | Rust burst of 100,000 runs, Windows' allocator | 65,300–65,900 runs/s | 69,000–74,000 runs/s | 68,500–72,500 runs/s |
 | Rust burst of 100,000 runs, Linux container | | 52,300–52,600 runs/s | 54,600–55,500 runs/s |
+| Rust, an async branch, after the CPU profile | | | 7.2 allocations |
+| Rust burst, allocated a run, after the CPU profile | | | 120.9 allocations, 26.1 KB |
 
 A Rust node already made one allocation, and makes one still. With DATAS on, .NET's burst after the first part was still bimodal, so a single number would say little; after the second it isn't, and the GC pauses for 6–7% of a 100,000-run burst with DATAS off, against 30% before. The Rust bursts from the second part on are spawned as an application would (`tokio::spawn(graph.run(...))`), one allocation fewer than the first part's harness, which boxed each run; the Linux numbers are from one session, compared within it.
 
@@ -206,14 +234,15 @@ A Rust node already made one allocation, and makes one still. With DATAS on, .NE
 What the measurements say for an application that starts many runs at once and has them wait on I/O. Measure your own workload before changing either default.
 
 - **.NET: DATAS.** Server GC's dynamic heap count is on by default since .NET 9. It keeps a process's memory small by starting with one heap and adding heaps as it judges they're needed. A burst of 100,000 runs in flight didn't get it past three, and spent most of its time in pauses. To turn it off, set `<GarbageCollectionAdaptationMode>0</GarbageCollectionAdaptationMode>` in the application's project, or `DOTNET_GCDynamicAdaptationMode=0` in its environment. Server GC then keeps a heap per core, which costs memory. This is the application's setting: a library can't set the GC mode, so neither `Datalium.Strata` nor `Datalium.Strata.Hosting` does.
-- **Rust: the allocator.** On Windows the system allocator held a burst of a million runs to about 6 cores; mimalloc tripled its rate. A library shouldn't choose the global allocator, so no Strata crate does. An application chooses it with `#[global_allocator]`.
+- **Rust: the allocator.** On Windows the system allocator held a burst of a million runs to about 6 cores; mimalloc tripled its rate. On Linux, glibc's `malloc` is about 40% of the engine's CPU in a burst, and mimalloc made it 1.6 times faster ("The Rust CPU profile"). Without changing allocator, letting glibc grow its heaps in larger steps (`GLIBC_TUNABLES=glibc.malloc.top_pad=268435456:glibc.malloc.trim_threshold=1073741824`) gave about 10%. A library shouldn't choose the global allocator, so no Strata crate does. An application chooses it with `#[global_allocator]`.
 
 ---
 
 ## What is left
 
-- **Rust: what limits its burst.** It isn't what a run holds ("Tried and not kept"). On Windows' allocator a burst of a million runs still uses about 6 cores, and mimalloc still roughly triples its rate. A run makes about 138 allocations, against plain code's 6. Most of them are a branch's: its handler's boxed future, its task and its place in the `JoinSet`, its path, context and span. Fewer allocations, or a look at how tokio schedules a burst of tasks of different sizes, is where to go next, with a CPU profile this time.
-- **Rust: a smaller `NodeContext`.** It is 248 bytes, moved into every async handler's future, and part of it is per run, not per node: the run id, the metadata, the telemetry. Those could live in the part it already shares, about 32 bytes less per context. Not tried here: given the boxes' result, it wants measuring for the rate, not the bytes.
+- **Rust: a task per branch.** About 22% of the engine's samples are tokio's work for the task each branch runs as. Running a group's async branches inside the group's own task would save most of it, and two allocations a branch, but CPU-heavy async branches would then no longer run on several threads at once. Not pursued.
+- **Rust: the allocator.** The largest single cost, and the application's choice ("Hosting a burst").
+- **Rust: a smaller `NodeContext`.** It is 248 bytes, moved into every async handler's future, and part of it is per run, not per node: the run id, the metadata, the telemetry. Those could live in the part it already shares, about 32 bytes less per context. Not pursued: the profile puts the context's cost (building and dropping it) at a few percent, and the futures' result says bytes held aren't what limits the rate.
 - **Rust: a cancelled run can end failed.** Found by a test this work added for .NET. If a run is cancelled while a parallel group runs, Rust can end it `NodeFailed` with `no branches to run`, where .NET ends it `Cancelled`. The executor's `select!` polls the group before the token, and the group fails first once its branches have settled as cancelled. It was so before this work. Since fixed in #48, with the test's Rust twin (`design/17`, "Implementation Status").
 
 Considered and not proposed: running a Rust group's async branches inside the group's own task instead of spawning one each, which would save the most but stop CPU-heavy branches from running on several threads at once; passing `NodeContext` by reference, which changes the API; pooling objects between runs.
@@ -233,23 +262,32 @@ None. The API is the same in both engines.
 - **What a node and a branch allocate is measured** (`dotnet/tests/Datalium.Strata.Tests/AllocationTests.cs`, alone in its collection because it reads the process's allocations). The fewest bytes of five warm runs of a line of 11 and of 101 nodes, and of a group of 1 and of 9 branches, whose handlers complete at once, so the run stays on the test's thread. A node may allocate 760 bytes (it allocates 728), a branch 740 (707), the same on Windows and Linux. Building the key eagerly again fails it (840 bytes a node), and so do a linked token source per attempt (792) and, before the inbox, per branch (1,117).
 - **A branch that ignores its token is still given up on** (`GroupControlsTests`, and the first two in `group_controls.rs`): it times out on time, it is cancelled when a sibling fails, and, in .NET, a run cancelled while it runs ends at once and the group still ends the branch's span. Taking the timer's registration out of the watcher makes the first hang; making the inbox ignore the token makes the last fail. All of them pass on main too: they say what the inbox must keep.
 - **A late failure of a branch given up on is observed** (`GroupControlsTests`, .NET only, since Rust drops such a branch's future): it never reaches `TaskScheduler.UnobservedTaskException`. A watcher that stops taking results once the group has given up fails it.
-- **What a branch allocates is counted** (`rust/strata-bench/tests/allocations.rs`): an async branch may make 10 allocations (it makes 9.2). A child token per branch again fails it (10.9).
+- **What a branch allocates is counted** (`rust/strata-bench/tests/allocations.rs`): an async branch may make 8 allocations (it makes 7.2; 9.2 after the first part). A child token per branch again fails it, and so do a second box of the handler's future and a copy of the deciding names on every run (8.2 each).
 - **The idempotency key is the node's when it is read late** (`NodeContextTests`, the twin of `rust/strata-core/tests/node_context.rs`): read after the run, a node's and a branch's keys are what they were. A context built by hand has an empty key, or the one it was given.
 - Everything else is the existing suite, which is what says the behaviour is the same: branch timeouts, sibling cancellation, joins, maps winding down, retries, durable execution's keys, events and spans.
 
 ## Review decisions
 
 1. **Is the change to DATAS a default the engine should make?** **No: it can't.** The GC mode is the application's runtime configuration. The engine documents it ("Hosting a burst").
-2. **Should a host crate or `Datalium.Strata.Hosting` offer a faster allocator, or turn DATAS off?** **Not decided here.** Both change the whole process, not just Strata's part of it.
+2. **Should a host crate or `Datalium.Strata.Hosting` offer a faster allocator, or turn DATAS off?** **No.** Both change the whole process, not just Strata's part of it: a library can't set the GC mode (decision 1), and the allocator was decided after the profile (decision 8).
 3. **Two parts or one?** **Two**, so the rewrite of the .NET group's wait is reviewed on its own.
 4. **Should `benchmarks/RESULTS.md` be run again for this?** **Not for these parts.** None of its scenarios is a burst of runs that wait, and the next full run will include both.
 5. **Keep the smaller Rust futures?** **No** (decided in review, 2026-11-18). They held a quarter to a third less, and ran about 10% slower with the default allocators.
 6. **Fix the Rust cancellation bug here?** **No** (decided in review): an issue and a change of its own, so this one stays about #37.
 7. **Should the inbox's cancellation wake run inline, as `WaitAsync`'s did?** **On the thread pool.** Inline, the loop would go on to end the node, and maybe the run, inside whatever cancelled the token. The observer sees the same events either way: 20 runs of a cancelled run with a stuck branch each gave the same events on main and on this change.
+8. **Should a host crate offer mimalloc?** **No** (decided in review, 2026-11-18, after the profile). The profile is recorded, and "Hosting a burst" names the choice and its numbers; the application makes it.
+9. **Is #37 done?** **Yes**, with the third part. .NET's burst runs at about 0.8 of plain code's rate with DATAS off. What is left in Rust is the allocator, which is the application's, and a task per branch, which is a design decision.
 
 ## Implementation Status
 
-The first part built 2026-11-18 (#46), in both engines; the second the same day.
+The first part built 2026-11-18 (#46), in both engines; the second (#47) and the third the same day.
+
+**How the third part was built:**
+
+- **Rust, `parallel.rs`:** `BranchWork` is an enum, `Caught` (the handler's future in place, `CatchUnwind` around it) or `Boxed` (a sync branch's wait); `BranchOutcomes` holds `deciding_at` and builds `deciding` in a `OnceLock`.
+- **Rust, `map.rs`:** an item's work is `BranchWork::caught`.
+- **Tests:** `allocations.rs`'s per-branch limit is 8 (it makes 7.2). Boxing the handler's future again, or copying the deciding names on every run again, makes it 8.2 and fails it. The join tests read `deciding()` as before.
+- **Documents:** this one; `design/38`'s count of what a branch allocates; `benchmarks/README.md`; `CHANGELOG.md`.
 
 **How the second part was built:**
 

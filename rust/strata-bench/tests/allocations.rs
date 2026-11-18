@@ -133,9 +133,9 @@ fn a_node_allocates_almost_nothing() {
     );
 }
 
-/// The allocations an async branch may make. It makes about 9 (12 before
+/// The allocations an async branch may make. It makes about 7 (12 before
 /// `design/49`): its handler's future, its task and the task's place in the
 /// group's `JoinSet`, its path, its context and span, and its name in its
 /// outcome. The limit leaves room for a dependency to change by one, not for
-/// a token or a copy of its name per branch.
-const PER_BRANCH_LIMIT: f64 = 10.0;
+/// a token, a second box or another copy of its name per branch.
+const PER_BRANCH_LIMIT: f64 = 8.0;
