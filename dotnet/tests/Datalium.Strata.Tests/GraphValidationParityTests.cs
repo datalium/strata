@@ -179,6 +179,50 @@ public class GraphValidationParityTests
     }
 
     [Fact]
+    public void A_Guarded_Loop_With_No_Way_Out_Is_Rejected()
+    {
+        // Every node is reachable and every loop guarded, but every node has an outgoing edge, so no
+        // run can end.
+        var result = GraphValidator.Validate(LoadTopology("no-terminal.json"));
+        Assert.Equal(
+            [
+                ("STRATA_ERR_NO_TERMINAL", "Plan", null),
+                ("STRATA_ERR_NO_TERMINAL", "Act", null),
+                ("STRATA_ERR_NO_TERMINAL", "Review", null),
+            ],
+            Summary(result));
+        Assert.Equal(ValidationErrorKind.NoTerminal, result.Errors[0].Kind);
+        Assert.Equal(
+            "Node 'Plan' has no path to an end: every path from it loops back without reaching a node with no outgoing edge.",
+            result.Errors[0].Message);
+    }
+
+    [Fact]
+    public void Reject_Timeout_And_Fallback_Routes_Neither_Stop_An_End_Nor_Hide_A_Way_Out()
+    {
+        // Approve's only edges are its reject and timeout routes, so approved it ends the run;
+        // Charge's only way out is its fallback.
+        var result = GraphValidator.Validate(LoadTopology("routes-reach-an-end.json"));
+        Assert.True(result.IsValid, string.Join("; ", result.Errors.Select(e => e.Message)));
+    }
+
+    [Fact]
+    public void No_Path_To_An_End_Is_Checked_At_Every_Level_And_An_Orphan_Only_Once()
+    {
+        var result = GraphValidator.Validate(LoadTopology("no-terminal-at-every-level.json"));
+        Assert.Equal(
+            [
+                ("STRATA_ERR_ORPHAN", "Island", null),
+                ("STRATA_ERR_NO_TERMINAL", "Remediate/Plan", null),
+                ("STRATA_ERR_NO_TERMINAL", "Remediate/Fix", null),
+                ("STRATA_ERR_UNGUARDED_CYCLE", "Fan/*/Loop", "Fan/*/Read"),
+                ("STRATA_ERR_NO_TERMINAL", "Fan/*/Read", null),
+                ("STRATA_ERR_NO_TERMINAL", "Fan/*/Loop", null),
+            ],
+            Summary(result));
+    }
+
+    [Fact]
     public void Errors_Come_Level_First_Then_Groups_Then_Children()
     {
         var result = GraphValidator.Validate(LoadTopology("errors-at-every-level.json"));

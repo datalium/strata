@@ -300,6 +300,45 @@ fn graph_validate_qualifies_an_error_two_levels_down() {
 }
 
 #[test]
+fn graph_validate_rejects_a_guarded_loop_with_no_way_out() {
+    let path = fixture_path("graph-validation/no-terminal.json");
+    let (code, json) = validate_json(&path);
+
+    assert_eq!(code, Some(1), "{json}");
+    let errors: Vec<(&str, &str, &str)> = json["errors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| {
+            (
+                e["code"].as_str().unwrap(),
+                e["kind"].as_str().unwrap(),
+                e["node"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        errors,
+        [
+            ("STRATA_ERR_NO_TERMINAL", "NoTerminal", "Plan"),
+            ("STRATA_ERR_NO_TERMINAL", "NoTerminal", "Act"),
+            ("STRATA_ERR_NO_TERMINAL", "NoTerminal", "Review"),
+        ]
+    );
+
+    let output = strata()
+        .args(["graph", "validate", "--path", &path])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("[STRATA_ERR_NO_TERMINAL] Act: Node 'Act' has no path to an end"),
+        "{stdout}"
+    );
+}
+
+#[test]
 fn graph_validate_rejects_an_empty_group_and_a_duplicate_branch() {
     let (code, json) = validate_json(&fixture_path("graph-validation/empty-group.json"));
     assert_eq!(code, Some(1));

@@ -6,7 +6,7 @@ namespace Datalium.Strata.Validation;
 /// Runs Tarjan's Strongly Connected Components algorithm over a <see cref="GraphTopology"/> to
 /// catch the structural error classes STRATA-SPEC-004 calls out: a missing entry point,
 /// orphan (unreachable) nodes, and unguarded cycles, plus dangling edges (an edge naming something
-/// that is not a node). Mirrors
+/// that is not a node) and nodes with no path to an end. Mirrors
 /// <c>rust/strata-core/src/validate.rs</c> so a graph accepted/rejected by one engine is
 /// accepted/rejected by the other.
 ///
@@ -18,8 +18,15 @@ namespace Datalium.Strata.Validation;
 public static class GraphValidator
 {
     /// <summary>
+    /// The <c>Condition</c> of the synthetic edges the engines export for a reject route, a timeout route and
+    /// a recovery-policy fallback. A node finishes by its other edges, so one whose only edges are these
+    /// ends the run when it finishes.
+    /// </summary>
+    private static readonly HashSet<string> RouteConditions = ["on_reject", "on_timeout", "on_failure"];
+
+    /// <summary>
     /// Every error in <paramref name="topology"/>, at every level, in this order: the level's own (entry
-    /// point, dangling edges, orphans, unguarded cycles), then its groups' in node order, then each
+    /// point, dangling edges, orphans, unguarded cycles, nodes with no path to an end), then its groups' in node order, then each
     /// subgraph child's, in node order. A level whose entry point is missing reports only that, as
     /// before.
     /// </summary>
@@ -57,8 +64,9 @@ public static class GraphValidator
 
         var adjacency = BuildAdjacency(topology, nodeNames);
 
-        AddOrphanErrors(topology, adjacency, Q, result);
+        var reachable = AddOrphanErrors(topology, adjacency, Q, result);
         AddUnguardedCycleErrors(topology, adjacency, Q, result);
+        AddNoTerminalErrors(topology, adjacency, reachable, Q, result);
         AddGroupErrors(topology, Q, result);
         if (inMap)
         {
@@ -248,7 +256,8 @@ public static class GraphValidator
         return adjacency;
     }
 
-    private static void AddOrphanErrors(
+    /// <summary>One error per node the entry point can't reach, in node order. Returns the nodes it can reach.</summary>
+    private static HashSet<string> AddOrphanErrors(
         GraphTopology topology,
         Dictionary<string, List<GraphEdge>> adjacency,
         Func<string, string> q,
@@ -286,6 +295,69 @@ public static class GraphValidator
                     name,
                     null,
                     $"Node '{name}' is isolated and unreachable from the entry point '{entry}'."));
+            }
+        }
+
+        return visited;
+    }
+
+    /// <summary>
+    /// One error per node reachable from the entry point that has no path to an end, in node order
+    /// (<c>design/Arch-Specs/STRATA-SPEC-004.md</c>). A run ends at a node with no outgoing edge but routes
+    /// (<see cref="RouteConditions"/>), so those are the ends; a walk back from them along every edge,
+    /// guarded, plain and routes alike, finds every node that can reach one. An orphan is reported as one
+    /// already, so not again here. It's a structural check: it proves a node <i>can</i> reach an end, not
+    /// that a run will, so the hop limit stays the guard for a loop whose exit never matches.
+    /// </summary>
+    private static void AddNoTerminalErrors(
+        GraphTopology topology,
+        Dictionary<string, List<GraphEdge>> adjacency,
+        HashSet<string> reachable,
+        Func<string, string> q,
+        ValidationResult result)
+    {
+        var reverse = new Dictionary<string, List<string>>();
+        foreach (var edge in adjacency.Values.SelectMany(edges => edges))
+        {
+            if (!reverse.TryGetValue(edge.To, out var sources))
+            {
+                reverse[edge.To] = sources = [];
+            }
+
+            sources.Add(edge.From);
+        }
+
+        var ends = new HashSet<string>();
+        var stack = new Stack<string>(topology.Nodes.Where(node =>
+            adjacency[node].All(edge => edge.Condition is { } condition && RouteConditions.Contains(condition))));
+        while (stack.Count > 0)
+        {
+            var node = stack.Pop();
+            if (!ends.Add(node))
+            {
+                continue;
+            }
+
+            foreach (var source in reverse.GetValueOrDefault(node, []))
+            {
+                if (!ends.Contains(source))
+                {
+                    stack.Push(source);
+                }
+            }
+        }
+
+        foreach (var node in topology.Nodes)
+        {
+            if (reachable.Contains(node) && !ends.Contains(node))
+            {
+                var name = q(node);
+                result.Errors.Add(new ValidationError(
+                    ValidationErrorKind.NoTerminal,
+                    "STRATA_ERR_NO_TERMINAL",
+                    name,
+                    null,
+                    $"Node '{name}' has no path to an end: every path from it loops back without reaching a node with no outgoing edge."));
             }
         }
     }

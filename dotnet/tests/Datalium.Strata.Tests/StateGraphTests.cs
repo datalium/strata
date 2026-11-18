@@ -65,8 +65,48 @@ public class StateGraphTests
         var compiled = new StateGraph<int>()
             .AddNode("A", Noop)
             .AddNode("B", Noop)
+            .AddNode("C", Noop)
             .AddEdge("A", "B")
             .AddConditionalEdge("B", "A", _ => false)
+            .AddEdge("B", "C")
+            .Compile();
+
+        Assert.NotNull(compiled);
+    }
+
+    [Fact]
+    public void A_Guarded_Loop_With_No_Way_Out_Is_Rejected()
+    {
+        // Every loop is guarded, but Act's exit to an end was forgotten.
+        var graph = new StateGraph<int>()
+            .AddNode("Plan", Noop)
+            .AddNode("Act", Noop)
+            .AddNode("Review", Noop)
+            .AddEdge("Plan", "Act")
+            .AddConditionalEdge("Act", "Review", s => s > 0)
+            .AddConditionalEdge("Act", "Plan", _ => true)
+            .AddEdge("Review", "Plan");
+
+        var ex = Assert.Throws<GraphCompilationException>(() => graph.Compile());
+        Assert.Equal(
+            [
+                (ValidationErrorKind.NoTerminal, "Plan"),
+                (ValidationErrorKind.NoTerminal, "Act"),
+                (ValidationErrorKind.NoTerminal, "Review"),
+            ],
+            ex.Result.Errors.Select(e => (e.Kind, e.Node)));
+        Assert.Equal("STRATA_ERR_NO_TERMINAL", ex.Result.Errors[0].Code);
+    }
+
+    [Fact]
+    public void A_Boundary_Whose_Only_Edge_Is_Its_Reject_Route_Ends_The_Run()
+    {
+        // Approved, Approve has no edge to take, so the run ends there.
+        var compiled = new StateGraph<int>()
+            .AddNode("Draft", Noop)
+            .AddNode("Approve", Noop)
+            .AddEdge("Draft", "Approve")
+            .AddInterruptBoundary("Approve", onReject: "Draft")
             .Compile();
 
         Assert.NotNull(compiled);

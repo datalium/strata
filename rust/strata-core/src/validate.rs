@@ -4,9 +4,10 @@
 //! [`GraphDefinition`] to catch the structural error classes the spec
 //! calls out: a missing entry point, orphan (unreachable) nodes, and
 //! unguarded cycles, plus dangling edges (an edge naming something that is
-//! not a node). This is the same function both `StateGraph::compile`
-//! (`graph.rs`) and the `strata graph validate` CLI command call, so a
-//! graph accepted/rejected by one is accepted/rejected by the other.
+//! not a node) and nodes with no path to an end. This is the same function
+//! both `StateGraph::compile` (`graph.rs`) and the `strata graph validate`
+//! CLI command call, so a graph accepted/rejected by one is accepted/rejected
+//! by the other.
 //!
 //! It recurses (`design/22-Graph-Structure-In-Definitions.md`): each parallel
 //! group must have at least one branch, with unique names, and each subgraph's
@@ -39,6 +40,10 @@ pub enum ValidationErrorKind {
     /// An interrupt boundary inside a map's template, at any depth
     /// (`design/48-Boundaries-In-Definitions.md`): a map item can't freeze.
     BoundaryInMap,
+    /// A node reachable from the entry point with no path to a node that
+    /// ends the run (`design/Arch-Specs/STRATA-SPEC-004.md`): every path from it
+    /// loops back.
+    NoTerminal,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,10 +70,20 @@ impl ValidationResult {
 struct AdjacentEdge {
     to: String,
     guarded: bool,
+    /// One of the routes a node takes only on a reject, a timeout or a
+    /// failure ([`ROUTE_CONDITIONS`]), not when it finishes.
+    route: bool,
 }
 
+/// The `condition` of the synthetic edges the engines export for a reject
+/// route, a timeout route and a recovery-policy fallback. A node finishes by
+/// its other edges, so one whose only edges are these ends the run when it
+/// finishes.
+const ROUTE_CONDITIONS: [&str; 3] = ["on_reject", "on_timeout", "on_failure"];
+
 /// Every error in `graph`, at every level, in this order: the level's own
-/// (entry point, dangling edges, orphans, unguarded cycles), then its groups'
+/// (entry point, dangling edges, orphans, unguarded cycles, nodes with no path
+/// to an end), then its groups'
 /// in node order, then each subgraph child's, in node order. A level whose
 /// entry point is missing reports only that, as before.
 pub fn validate(graph: &GraphDefinition) -> ValidationResult {
@@ -129,11 +144,16 @@ fn validate_level(
             .push(AdjacentEdge {
                 to: edge.to.clone(),
                 guarded: edge.guarded,
+                route: edge
+                    .condition
+                    .as_deref()
+                    .is_some_and(|condition| ROUTE_CONDITIONS.contains(&condition)),
             });
     }
 
-    add_orphan_errors(graph, &adjacency, q, result);
+    let reachable = add_orphan_errors(graph, &adjacency, q, result);
     add_unguarded_cycle_errors(graph, &adjacency, q, result);
+    add_no_terminal_errors(graph, &adjacency, &reachable, q, result);
     add_group_errors(graph, q, result);
     if in_map {
         add_wait_in_map_errors(graph, q, result);
@@ -316,12 +336,14 @@ fn add_dangling_edge_errors(
     }
 }
 
-fn add_orphan_errors(
-    graph: &GraphDefinition,
-    adjacency: &HashMap<String, Vec<AdjacentEdge>>,
+/// One error per node the entry point can't reach, in node order. Returns
+/// the nodes it can reach.
+fn add_orphan_errors<'a>(
+    graph: &'a GraphDefinition,
+    adjacency: &'a HashMap<String, Vec<AdjacentEdge>>,
     q: &Qualify<'_>,
     result: &mut ValidationResult,
-) {
+) -> HashSet<&'a str> {
     let mut visited: HashSet<&str> = HashSet::new();
     let mut stack = vec![graph.entry_point.as_str()];
 
@@ -346,6 +368,65 @@ fn add_orphan_errors(
                 code: "STRATA_ERR_ORPHAN",
                 message: format!(
                     "Node '{name}' is isolated and unreachable from the entry point '{entry}'."
+                ),
+                node: name,
+                related_node: None,
+            });
+        }
+    }
+    visited
+}
+
+/// One error per node reachable from the entry point that has no path to an
+/// end, in node order (`design/Arch-Specs/STRATA-SPEC-004.md`). A run ends at a
+/// node with no outgoing edge but routes ([`ROUTE_CONDITIONS`]), so those are
+/// the ends; a walk back from them along every edge, guarded, plain and
+/// routes alike, finds every node that can reach one. An orphan is reported
+/// as one already, so not again here. It's a structural check: it proves a
+/// node *can* reach an end, not that a run will, so the hop limit stays the
+/// guard for a loop whose exit never matches.
+fn add_no_terminal_errors(
+    graph: &GraphDefinition,
+    adjacency: &HashMap<String, Vec<AdjacentEdge>>,
+    reachable: &HashSet<&str>,
+    q: &Qualify<'_>,
+    result: &mut ValidationResult,
+) {
+    let mut reverse: HashMap<&str, Vec<&str>> = HashMap::new();
+    for (from, edges) in adjacency {
+        for edge in edges {
+            reverse
+                .entry(edge.to.as_str())
+                .or_default()
+                .push(from.as_str());
+        }
+    }
+
+    let mut ends: HashSet<&str> = HashSet::new();
+    let mut stack: Vec<&str> = graph
+        .nodes
+        .iter()
+        .map(|n| n.name.as_str())
+        .filter(|name| adjacency[*name].iter().all(|edge| edge.route))
+        .collect();
+    while let Some(node) = stack.pop() {
+        if !ends.insert(node) {
+            continue;
+        }
+        if let Some(sources) = reverse.get(node) {
+            stack.extend(sources.iter().filter(|source| !ends.contains(*source)));
+        }
+    }
+
+    for node in &graph.nodes {
+        let name = node.name.as_str();
+        if reachable.contains(name) && !ends.contains(name) {
+            let name = q.name(name);
+            result.errors.push(ValidationError {
+                kind: ValidationErrorKind::NoTerminal,
+                code: "STRATA_ERR_NO_TERMINAL",
+                message: format!(
+                    "Node '{name}' has no path to an end: every path from it loops back without reaching a node with no outgoing edge."
                 ),
                 node: name,
                 related_node: None,
@@ -642,6 +723,54 @@ mod fixture_tests {
             )]
         );
         assert_eq!(result.errors[0].kind, ValidationErrorKind::DuplicateBranch);
+    }
+
+    #[test]
+    fn a_guarded_loop_with_no_way_out_is_rejected() {
+        // Every node is reachable and every loop guarded, but every node has
+        // an outgoing edge, so no run can end.
+        let result = validate(&load("graph-validation", "no-terminal.json"));
+        assert_eq!(
+            summary(&result),
+            [
+                ("STRATA_ERR_NO_TERMINAL", "Plan", None),
+                ("STRATA_ERR_NO_TERMINAL", "Act", None),
+                ("STRATA_ERR_NO_TERMINAL", "Review", None),
+            ]
+        );
+        assert_eq!(result.errors[0].kind, ValidationErrorKind::NoTerminal);
+        assert_eq!(
+            result.errors[0].message,
+            "Node 'Plan' has no path to an end: every path from it loops back without reaching a node with no outgoing edge."
+        );
+    }
+
+    #[test]
+    fn reject_timeout_and_fallback_routes_neither_stop_an_end_nor_hide_a_way_out() {
+        // Approve's only edges are its reject and timeout routes, so approved
+        // it ends the run; Charge's only way out is its fallback.
+        let result = validate(&load("graph-validation", "routes-reach-an-end.json"));
+        assert!(result.is_valid(), "expected valid, got {:?}", result.errors);
+    }
+
+    #[test]
+    fn no_path_to_an_end_is_checked_at_every_level_and_an_orphan_only_once() {
+        let result = validate(&load("graph-validation", "no-terminal-at-every-level.json"));
+        assert_eq!(
+            summary(&result),
+            [
+                ("STRATA_ERR_ORPHAN", "Island", None),
+                ("STRATA_ERR_NO_TERMINAL", "Remediate/Plan", None),
+                ("STRATA_ERR_NO_TERMINAL", "Remediate/Fix", None),
+                (
+                    "STRATA_ERR_UNGUARDED_CYCLE",
+                    "Fan/*/Loop",
+                    Some("Fan/*/Read")
+                ),
+                ("STRATA_ERR_NO_TERMINAL", "Fan/*/Read", None),
+                ("STRATA_ERR_NO_TERMINAL", "Fan/*/Loop", None),
+            ]
+        );
     }
 
     #[test]

@@ -194,9 +194,10 @@ public sealed record GraphJoin(JoinKind Policy, int? Count, string? Condition, P
 public sealed record GraphBranch(string Name, IReadOnlyDictionary<string, string>? Metadata = null);
 
 /// <param name="Condition">
-/// Descriptive text for the exported definition only (validation ignores it). The engine records
-/// no text for an edge predicate, so this is set only on the synthetic edges: <c>on_failure</c> for a
-/// recovery-policy fallback, <c>on_reject</c> for an interrupt boundary's reject route, <c>on_timeout</c> for
-/// a wait's timeout route.
+/// Descriptive text for the exported definition. The engine records no text for an edge predicate, so
+/// this is set only on the synthetic edges: <c>on_failure</c> for a recovery-policy fallback,
+/// <c>on_reject</c> for an interrupt boundary's reject route, <c>on_timeout</c> for a wait's timeout route.
+/// Validation reads only those three: a node whose only edges are these ends the run when it finishes
+/// (<c>STRATA_ERR_NO_TERMINAL</c>).
 /// </param>
 public readonly record struct GraphEdge(string From, string To, bool Guarded, string? Condition = null);

@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.3.0",
+  "entry_point": "Start",
+  "nodes": [
+    { "name": "Start", "metadata": null },
+    { "name": "Island", "metadata": null },
+    {
+      "name": "Remediate",
+      "metadata": null,
+      "kind": "subgraph",
+      "graph": {
+        "schema_version": "1.0.0",
+        "entry_point": "Plan",
+        "nodes": [
+          { "name": "Plan", "metadata": null },
+          { "name": "Fix", "metadata": null }
+        ],
+        "edges": [
+          { "from": "Plan", "to": "Fix", "guarded": false, "condition": null },
+          { "from": "Fix", "to": "Plan", "guarded": true, "condition": "retry" }
+        ]
+      }
+    },
+    {
+      "name": "Fan",
+      "metadata": null,
+      "kind": "map",
+      "graph": {
+        "schema_version": "1.0.0",
+        "entry_point": "Read",
+        "nodes": [
+          { "name": "Read", "metadata": null },
+          { "name": "Loop", "metadata": null }
+        ],
+        "edges": [
+          { "from": "Read", "to": "Loop", "guarded": false, "condition": null },
+          { "from": "Loop", "to": "Read", "guarded": false, "condition": null }
+        ]
+      }
+    },
+    { "name": "End", "metadata": null }
+  ],
+  "edges": [
+    { "from": "Start", "to": "Remediate", "guarded": false, "condition": null },
+    { "from": "Island", "to": "Island", "guarded": true, "condition": "again" },
+    { "from": "Remediate", "to": "Fan", "guarded": false, "condition": null },
+    { "from": "Fan", "to": "End", "guarded": false, "condition": null }
+  ]
+}

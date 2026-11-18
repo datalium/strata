@@ -180,7 +180,7 @@
           },
           "condition": {
             "type": ["string", "null"],
-            "description": "Optional human-readable description of the guard condition. The engines write it only on their synthetic edges: 'on_failure' for a recovery-policy fallback (design/04-Error-Recovery.md), 'on_reject' for an interrupt boundary's reject route (design/21-Typed-Human-Signals.md), and 'on_timeout' for a timed boundary's or an event wait's timeout route (design/29-Event-Waits-And-Timers.md), all guarded."
+            "description": "Optional human-readable description of the guard condition. The engines write it only on their synthetic edges: 'on_failure' for a recovery-policy fallback (design/04-Error-Recovery.md), 'on_reject' for an interrupt boundary's reject route (design/21-Typed-Human-Signals.md), and 'on_timeout' for a timed boundary's or an event wait's timeout route (design/29-Event-Waits-And-Timers.md), all guarded. A node whose only edges carry one of these three ends the run when it finishes, so validation counts it as an end (STRATA_ERR_NO_TERMINAL)."
           }
         }
       }

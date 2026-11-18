@@ -2178,10 +2178,63 @@ mod tests {
         let graph = StateGraph::<i32>::new()
             .add_node("A", noop)
             .add_node("B", noop)
+            .add_node("C", noop)
             .add_edge("A", "B")
             .add_conditional_edge("B", "A", |_: &i32| false)
+            .add_edge("B", "C")
             .compile();
 
         assert!(graph.is_ok());
+    }
+
+    #[test]
+    fn a_guarded_loop_with_no_way_out_is_rejected() {
+        // Every loop is guarded, but Act's exit to an end was forgotten.
+        let result = StateGraph::<i32>::new()
+            .add_node("Plan", noop)
+            .add_node("Act", noop)
+            .add_node("Review", noop)
+            .add_edge("Plan", "Act")
+            .add_conditional_edge("Act", "Review", |s: &i32| *s > 0)
+            .add_conditional_edge("Act", "Plan", |_: &i32| true)
+            .add_edge("Review", "Plan")
+            .compile();
+
+        match result {
+            Err(StrataError::GraphInvalid(validation)) => {
+                let found: Vec<(ValidationErrorKind, &str)> = validation
+                    .errors
+                    .iter()
+                    .map(|e| (e.kind, e.node.as_str()))
+                    .collect();
+                assert_eq!(
+                    found,
+                    [
+                        (ValidationErrorKind::NoTerminal, "Plan"),
+                        (ValidationErrorKind::NoTerminal, "Act"),
+                        (ValidationErrorKind::NoTerminal, "Review"),
+                    ]
+                );
+                assert_eq!(validation.errors[0].code, "STRATA_ERR_NO_TERMINAL");
+            }
+            Err(other) => panic!("expected GraphInvalid, got {other:?}"),
+            Ok(_) => panic!("expected compile to fail"),
+        }
+    }
+
+    #[test]
+    fn a_boundary_whose_only_edge_is_its_reject_route_ends_the_run() {
+        // Approved, Approve has no edge to take, so the run ends there.
+        let graph = StateGraph::<i32>::new()
+            .add_node("Draft", noop)
+            .add_node("Approve", noop)
+            .add_edge("Draft", "Approve")
+            .add_interrupt_boundary_with(
+                "Approve",
+                crate::wait::BoundaryOptions::new().with_reject("Draft"),
+            )
+            .compile();
+
+        assert!(graph.is_ok(), "{:?}", graph.err());
     }
 }

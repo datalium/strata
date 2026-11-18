@@ -3,10 +3,12 @@
   "entry_point": "A",
   "nodes": [
     { "name": "A", "metadata": null },
-    { "name": "B", "metadata": null }
+    { "name": "B", "metadata": null },
+    { "name": "Done", "metadata": null }
   ],
   "edges": [
     { "from": "A", "to": "B", "guarded": true, "condition": "again" },
+    { "from": "A", "to": "Done", "guarded": false, "condition": null },
     { "from": "B", "to": "A", "guarded": false, "condition": null }
   ]
 }

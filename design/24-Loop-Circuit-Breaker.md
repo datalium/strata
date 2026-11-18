@@ -371,4 +371,4 @@ Built 2026-10-04 in both engines and the CLI, in one change, as specified above.
 - **A queryable hop count.** `strata.hops` is in `metadata`, so `ListThreads` can't filter or sort on it, and `NodeContext` doesn't expose it.
 - **Per-node visit limits** ("`expand` at most 3 times"). SPEC-004 describes a total per level.
 - **Token, cost or time budgets.** StrataOps keeps budgets in its Model Fabric, and `RunOptions.Deadline` / `RunConfig::with_deadline` already bound time.
-- **SPEC-004's "missing terminal paths" check**, a separate validation gap.
+- ~~**SPEC-004's "missing terminal paths" check**, a separate validation gap.~~ Built 2026-11-18 (#50) as `STRATA_ERR_NO_TERMINAL` (`design/Arch-Specs/STRATA-SPEC-004.md`, "Implementation Status"). The two are halves of one guard: validation refuses a graph in which some node can't reach an end, and the hop limit stops a run of a graph that can end but doesn't, because a guarded exit never matches.

@@ -45,9 +45,11 @@
               "entry_point": "Read",
               "nodes": [
                 { "name": "Read", "metadata": null },
-                { "name": "Loop", "metadata": null }
+                { "name": "Loop", "metadata": null },
+                { "name": "Done", "metadata": null }
               ],
               "edges": [
+                { "from": "Read", "to": "Done", "guarded": true, "condition": "done" },
                 { "from": "Read", "to": "Loop", "guarded": false, "condition": null },
                 { "from": "Loop", "to": "Read", "guarded": false, "condition": null }
               ]

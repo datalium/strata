@@ -71,7 +71,17 @@ their edges however they like.
   boundary (`Fan/*/Read`), a wait node (`Fan/*/Window`) and a subgraph whose
   child has a boundary (`Fan/*/Inner/Sign`): a `STRATA_ERR_WAIT_IN_MAP` error,
   then two `STRATA_ERR_BOUNDARY_IN_MAP` errors, in that order (a level's wait
-  errors, then its boundary errors, then each child's).
+  errors, then its boundary errors, then each child's). `no-terminal`
+  (`design/Arch-Specs/STRATA-SPEC-004.md`) is a graph whose every loop is
+  guarded but has no way out: three `STRATA_ERR_NO_TERMINAL` errors, `Plan`,
+  `Act` and `Review`. `routes-reach-an-end` is valid: a boundary whose only
+  edges are its `on_reject` and `on_timeout` routes is an end, and a loop whose
+  only way out is an `on_failure` fallback has one. `no-terminal-at-every-level`
+  pins the order and the paths: an orphan with no way out, reported once, as an
+  orphan (`Island`), then a subgraph's nodes (`Remediate/Plan`, `Remediate/Fix`),
+  then a map template's unguarded cycle followed by its two nodes (`Fan/*/Read`,
+  `Fan/*/Loop`). The fixtures for the other errors each have a way out (a
+  `Done` node), so they report only the error they are about.
 - `schema/fixtures/graph-export/` (demo 14) — what `StateGraph::to_definition()`
   (Rust) and `StateGraph<T>.ToDefinition()` (.NET) must write for one fixed
   graph, including the guarded `on_failure` edge a recovery-policy fallback

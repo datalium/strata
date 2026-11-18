@@ -5,13 +5,15 @@
     { "name": "A", "metadata": null },
     { "name": "B", "metadata": null },
     { "name": "C", "metadata": null },
-    { "name": "D", "metadata": null }
+    { "name": "D", "metadata": null },
+    { "name": "Done", "metadata": null }
   ],
   "edges": [
     { "from": "A", "to": "B", "guarded": false, "condition": null },
     { "from": "A", "to": "C", "guarded": false, "condition": null },
     { "from": "B", "to": "D", "guarded": false, "condition": null },
     { "from": "C", "to": "D", "guarded": false, "condition": null },
-    { "from": "D", "to": "A", "guarded": true, "condition": "retry" }
+    { "from": "D", "to": "A", "guarded": true, "condition": "retry" },
+    { "from": "D", "to": "Done", "guarded": false, "condition": null }
   ]
 }

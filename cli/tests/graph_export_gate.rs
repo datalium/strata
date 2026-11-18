@@ -93,9 +93,15 @@ fn a_graph_compile_rejects_is_rejected_by_the_cli_with_the_same_diagnostics() {
         .collect();
     let compile_codes: Vec<&str> = compile_view.errors.iter().map(|e| e.code).collect();
     assert_eq!(cli_codes, compile_codes);
+    // A <-> B is unguarded and has no way out, so both are reported.
     assert_eq!(
         cli_codes,
-        ["STRATA_ERR_ORPHAN", "STRATA_ERR_UNGUARDED_CYCLE"]
+        [
+            "STRATA_ERR_ORPHAN",
+            "STRATA_ERR_UNGUARDED_CYCLE",
+            "STRATA_ERR_NO_TERMINAL",
+            "STRATA_ERR_NO_TERMINAL"
+        ]
     );
 }
 
