@@ -20,7 +20,6 @@ use tracing::{Instrument, Span};
 use crate::checkpoint::{CheckpointStore, GraphExecutionResult, RunRefs};
 use crate::graph::{CompiledGraph, NodeError};
 use crate::node::{AttemptInputs, BoxFuture, Suspension};
-use crate::observability::CatchUnwind;
 use crate::parallel::{
     BranchOutcomes, BranchWork, FanOut, Join, JoinKind, Launch, Noun, PartialResults, run_fan_out,
 };
@@ -274,41 +273,36 @@ where
             .map(|ctx| ctx.for_node(format!("{name}/{key}")).scoped());
         let level = inputs.level.child(started.token, &started.path);
         let child = spec.child.clone();
-        let future: BoxFuture<'static, Result<T, NodeError>> = Box::pin(
-            async move {
-                let capture = Arc::new(CapturingStore::default());
-                let store: Arc<dyn CheckpointStore> = capture.clone();
-                let run = RunRefs {
-                    thread_id: &key,
-                    store: &store,
-                    stream: stream.as_ref(),
-                    level: &level,
-                };
-                let entry: &str = &child.definition.entry_point;
-                let result = child.execute_from(run, entry, child_state, None, 0).await;
-                let captured = capture.last.lock().unwrap().take();
-                match result {
-                    GraphExecutionResult::Completed(state) => Ok(state),
-                    // Only the item's token stops its child; the runner sees
-                    // it fired and reports the item cancelled or timed out.
-                    GraphExecutionResult::Cancelled { node, .. } => {
-                        Err(NodeError::Fatal(format!("cancelled at '{node}'")))
-                    }
-                    // `.compile()` refuses a child with an interrupt boundary,
-                    // so this is only a guard.
-                    GraphExecutionResult::Interrupted { suspended_node, .. } => {
-                        Err(NodeError::Fatal(format!(
-                            "froze at '{suspended_node}', which a map item can't do"
-                        )))
-                    }
-                    GraphExecutionResult::Failed(error) => {
-                        Err(child_failure(None, error, captured).error)
-                    }
+        let future: BoxFuture<'static, Result<T, NodeError>> = Box::pin(async move {
+            let capture = Arc::new(CapturingStore::default());
+            let store: Arc<dyn CheckpointStore> = capture.clone();
+            let run = RunRefs {
+                thread_id: &key,
+                store: &store,
+                stream: stream.as_ref(),
+                level: &level,
+            };
+            let entry: &str = &child.definition.entry_point;
+            let result = child.execute_from(run, entry, child_state, None, 0).await;
+            let captured = capture.last.lock().unwrap().take();
+            match result {
+                GraphExecutionResult::Completed(state) => Ok(state),
+                // Only the item's token stops its child; the runner sees
+                // it fired and reports the item cancelled or timed out.
+                GraphExecutionResult::Cancelled { node, .. } => {
+                    Err(NodeError::Fatal(format!("cancelled at '{node}'")))
+                }
+                // `.compile()` refuses a child with an interrupt boundary,
+                // so this is only a guard.
+                GraphExecutionResult::Interrupted { suspended_node, .. } => Err(NodeError::Fatal(
+                    format!("froze at '{suspended_node}', which a map item can't do"),
+                )),
+                GraphExecutionResult::Failed(error) => {
+                    Err(child_failure(None, error, captured).error)
                 }
             }
-            .instrument(started.span),
-        );
-        Box::pin(CatchUnwind::new(future))
+        });
+        BranchWork::caught(future.instrument(started.span))
     };
     let options = &spec.options;
     let settings = FanOut {
