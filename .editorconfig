@@ -1,0 +1,6 @@
+# Every file in the repository has LF line endings. Without this, `dotnet format` on Windows writes CRLF where
+# it rewrites a line break (before a comment inside a method chain, say), and reports LF files as misformatted.
+root = true
+
+[*]
+end_of_line = lf

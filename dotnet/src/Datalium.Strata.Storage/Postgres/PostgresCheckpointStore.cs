@@ -1225,6 +1225,27 @@ public sealed class PostgresCheckpointStore : ICheckpointStore, ICheckpointQuery
     public async ValueTask<Checkpoint?> LoadAsync(string threadId, CancellationToken cancellationToken = default) =>
         (await LatestAsync(threadId, cancellationToken).ConfigureAwait(false))?.Checkpoint;
 
+    /// <summary>
+    /// The head table joined to each thread's latest row in the log, as a listing reads them. The log's
+    /// <c>thread_id</c> is in the database's collation and the head table's in <c>"C"</c>. Compared as they are,
+    /// the two would be compared in <c>"C"</c>, which <c>checkpoints_pkey</c> can't answer, so every page would join
+    /// every matching thread. Compared in the log's collation, each row is one lookup in the primary key. Equality
+    /// in a deterministic collation is byte equality, so the rows are the same either way. Identical to
+    /// <c>strata-memory</c>'s <c>POSTGRES_THREAD_LISTING_FROM</c>.
+    /// </summary>
+    internal const string ThreadListingFrom = """
+        FROM checkpoint_threads h
+        JOIN checkpoints c ON c.thread_id = (h.thread_id COLLATE "default") AND c.sequence = h.sequence
+        """;
+
+    /// <summary>
+    /// Whether a live lease holds the head table's thread <c>h</c>: what keeps a purge off a held thread. Compared in
+    /// the leases' collation, for the reason <see cref="ThreadListingFrom"/> gives, so it is one lookup in
+    /// <c>checkpoint_leases_pkey</c>. Identical to <c>strata-memory</c>'s <c>POSTGRES_HELD_BY_LIVE_LEASE</c>.
+    /// </summary>
+    internal const string HeldByLiveLease =
+        "EXISTS (SELECT 1 FROM checkpoint_leases l WHERE l.thread_id = (h.thread_id COLLATE \"default\") AND l.expires_at > clock_timestamp())";
+
     public async ValueTask<ThreadPage> ListThreadsAsync(ThreadQuery query, CancellationToken cancellationToken = default)
     {
         var cursor = query.Validate();
@@ -1288,8 +1309,7 @@ public sealed class PostgresCheckpointStore : ICheckpointStore, ICheckpointQuery
                    NULL::text, c.metadata::text, c.created_at, c.resumed_at, c.nested::text, c.decision::text,
                    c.wait::text, c.graph_id, c.graph_version, h.updated_at,
                    CASE WHEN c.schema_version IN ({CheckpointEncoding.EncodedVersionsSql}) THEN c.frozen_state->>'checkpoint_version' END
-            FROM checkpoint_threads h
-            JOIN checkpoints c ON c.thread_id = h.thread_id AND c.sequence = h.sequence
+            {ThreadListingFrom}
             """);
         if (filters.Count > 0)
         {
@@ -1438,11 +1458,9 @@ public sealed class PostgresCheckpointStore : ICheckpointStore, ICheckpointQuery
         var before = CheckpointTimestamps.Text(olderThan);
         var candidates = await ReadAsync(
             "purge",
-            """
+            $"""
             SELECT h.thread_id, h.sequence FROM checkpoint_threads h
-            WHERE h.state = ANY($1) AND h.updated_at < $2
-              AND NOT EXISTS (
-                  SELECT 1 FROM checkpoint_leases l WHERE l.thread_id = h.thread_id AND l.expires_at > clock_timestamp())
+            WHERE h.state = ANY($1) AND h.updated_at < $2 AND NOT {HeldByLiveLease}
             ORDER BY h.updated_at, h.thread_id LIMIT $3
             """,
             [
@@ -1482,11 +1500,10 @@ public sealed class PostgresCheckpointStore : ICheckpointStore, ICheckpointQuery
         await PostgresSchema.LockAsync(connection, transaction, "checkpoints", threadId, cancellationToken).ConfigureAwait(false);
 
         await using var head = new NpgsqlCommand(
-            """
+            $"""
             DELETE FROM checkpoint_threads h
             WHERE h.thread_id = @thread_id AND h.sequence = @sequence AND h.state = ANY(@states) AND h.updated_at < @before
-              AND NOT EXISTS (
-                  SELECT 1 FROM checkpoint_leases l WHERE l.thread_id = h.thread_id AND l.expires_at > clock_timestamp())
+              AND NOT {HeldByLiveLease}
             """,
             connection,
             transaction);
