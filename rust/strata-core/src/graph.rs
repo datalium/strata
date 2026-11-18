@@ -1294,18 +1294,22 @@ where
         };
         let needs_stream = branches.has_streaming_branch();
         let branches = Arc::new(branches.into_branches());
+        // The names every run of the group reports its branches by, made once
+        // (design/49-Burst-Throughput.md).
+        let names: Arc<[String]> = branches.iter().map(|(name, _)| name.clone()).collect();
         let options = Arc::new(options);
         let group: Arc<str> = Arc::from(name.as_str());
         let run: NodeHandler<S> = Arc::new(move |state, inputs| {
-            let (branches, reducer, options, group) = (
+            let (branches, names, reducer, options, group) = (
                 branches.clone(),
+                names.clone(),
                 reducer.clone(),
                 options.clone(),
                 group.clone(),
             );
             Box::pin(async move {
                 let entry = state.clone();
-                run_branches(&group, &branches, &options, state, inputs)
+                run_branches(&group, &branches, &names, &options, state, inputs)
                     .await
                     .map(|results| Step::Done(reducer(&entry, results)))
                     .map_err(AttemptError::from)

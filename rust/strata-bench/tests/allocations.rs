@@ -1,7 +1,9 @@
-//! What a node costs the heap (`design/38-Rust-Executor-Overhead.md`): the
-//! engine once made 28 allocations for every node it ran, and that was a third
-//! of a node's time. This counts them, so they don't come back unnoticed. A
-//! count, unlike a timing, is the same on every machine.
+//! What a node and a branch cost the heap (`design/38-Rust-Executor-Overhead.md`,
+//! `design/49-Burst-Throughput.md`): the engine once made 28 allocations for
+//! every node it ran, and that was a third of a node's time; a burst of runs
+//! in flight at once holds what their branches allocate. This counts them, so
+//! they don't come back unnoticed. A count, unlike a timing, is the same on
+//! every machine.
 //!
 //!   cargo test -p strata-bench --test allocations -- --nocapture   # prints the counts
 //!
@@ -12,8 +14,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use datalium_strata::checkpoint::CheckpointStore;
-use datalium_strata::graph::CompileOptions;
-use strata_bench::{Handler, LatestOnlyStore, completed, linear, work};
+use datalium_strata::graph::{CompileOptions, CompiledGraph};
+use strata_bench::{Handler, LatestOnlyStore, Work, completed, group, linear, work};
 
 struct Counting;
 
@@ -47,7 +49,12 @@ static GLOBAL: Counting = Counting;
 /// process is warm: the fewest of five runs, since tokio now and then starts
 /// another blocking thread for a sync handler, and that allocates too.
 async fn allocations(nodes: usize, handler: Handler, store: &Arc<dyn CheckpointStore>) -> u64 {
-    let graph = linear(nodes, handler, CompileOptions::new());
+    allocations_of(&linear(nodes, handler, CompileOptions::new()), store).await
+}
+
+/// The allocations one run of `graph` makes, once the process is warm: the
+/// fewest of five.
+async fn allocations_of(graph: &CompiledGraph<Work>, store: &Arc<dyn CheckpointStore>) -> u64 {
     for _ in 0..50 {
         completed(graph.run("t", work(0), store.clone()).await);
     }
@@ -108,4 +115,27 @@ fn a_node_allocates_almost_nothing() {
             handler.name()
         );
     }
+
+    // A parallel group's async branch (design/49-Burst-Throughput.md). Without
+    // a branch timeout it watches its siblings' token, so it has no token of
+    // its own, and its task holds no timer.
+    let (one, nine) = runtime.block_on(async {
+        (
+            allocations_of(&group(1), &store).await,
+            allocations_of(&group(9), &store).await,
+        )
+    });
+    let per_branch = (nine - one) as f64 / 8.0;
+    println!("async branch: {per_branch:.1} allocations a branch");
+    assert!(
+        per_branch <= PER_BRANCH_LIMIT,
+        "an async branch made {per_branch:.1} allocations; the limit is {PER_BRANCH_LIMIT}"
+    );
 }
+
+/// The allocations an async branch may make. It makes about 9 (12 before
+/// `design/49`): its handler's future, its task and the task's place in the
+/// group's `JoinSet`, its path, its context and span, and its name in its
+/// outcome. The limit leaves room for a dependency to change by one, not for
+/// a token or a copy of its name per branch.
+const PER_BRANCH_LIMIT: f64 = 10.0;

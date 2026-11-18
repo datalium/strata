@@ -100,8 +100,25 @@ public sealed class NodeContext : IExecutionContext
     /// in a recovery (<see cref="IsRecovery"/>). In any other run it ends with <c>@</c> and the run id, so a
     /// later resume never repeats one. A branch of a parallel group has its own, under its group's hop. Empty
     /// in a context built by hand, unless set.
+    ///
+    /// The engine builds it the first time it is read, since most handlers never read it
+    /// (<c>design/49-Burst-Throughput.md</c>); it is the same string whenever, and on whichever thread, it is read.
     /// </summary>
-    public string IdempotencyKey { get; init; } = string.Empty;
+    public string IdempotencyKey
+    {
+        // Two threads reading it first at once may each build it: the same value, so either is kept.
+        get => _idempotencyKey ??= KeyLevel?.KeyFor(NodePath) ?? string.Empty;
+        init => _idempotencyKey = value;
+    }
+
+    private string? _idempotencyKey;
+
+    /// <summary>
+    /// The level the engine made this context at, which builds <see cref="IdempotencyKey"/> from
+    /// <see cref="NodePath"/> and its hop numbers when it is first read. <see langword="null"/> in a context
+    /// built by hand.
+    /// </summary>
+    internal LevelScope? KeyLevel { get; init; }
 
     /// <summary>
     /// Whether this node may have run before, in a process that died (<c>design/33-Durable-Execution.md</c>):

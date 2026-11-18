@@ -57,19 +57,22 @@ Every one runs against a store that keeps a thread's latest checkpoint in a dict
 
 A sync handler runs off the executor (tokio's blocking pool, the .NET thread pool) and an async one on it, which is why traversal is measured with both. In Rust that is a thread hand-off each way, and the sync figures move from run to run with whether the threads stayed awake (`design/38-Rust-Executor-Overhead.md`, "What is left"): run them more than once before believing one. Rust also measures `inline`, a sync handler on the executor (`add_inline_node`, `design/39-Inline-Sync-Handlers.md`); .NET has no such handler, so those rows are Rust's alone.
 
-## Allocations, and a loop for a profiler (Rust)
+## Allocations, and a loop for a profiler
 
-Two things that are not benchmarks, from the work that reduced what a node costs the Rust engine (`design/38-Rust-Executor-Overhead.md`):
+Things that are not benchmarks, from the work that reduced what a node costs the Rust engine (`design/38-Rust-Executor-Overhead.md`) and what a node and a branch cost both engines (`design/49-Burst-Throughput.md`):
 
 ```bash
-# What a node and a run allocate, counted. It is a test, so it also fails if a node starts allocating again.
+# What a node, a branch and a run allocate (Rust), counted. It is a test, so it also fails if a node starts allocating again.
 (cd rust && cargo test -p strata-bench --test allocations -- --nocapture)
+
+# What a node and a branch allocate (.NET), in bytes. A test too.
+dotnet test dotnet/Datalium.Strata.sln --filter "FullyQualifiedName~AllocationTests" --logger "console;verbosity=detailed"
 
 # One scenario in a loop, for a sampling profiler to watch: [async|sync|inline] [nodes] [seconds].
 (cd rust && cargo run --release -p strata-bench --example profile_loop -- async 100 10)
 ```
 
-A count is the same on every machine, which is why it can be a test and a timing can't.
+A count is the same on every machine, which is why it can be a test and a timing can't. .NET counts bytes, not allocations, which are the same on every machine for one runtime.
 
 ## The profile
 
@@ -97,6 +100,7 @@ A metric's name ends with its unit. Percentiles are nearest-rank. Timers on Wind
 - **Postgres and Redis are a container on the same machine.** The numbers are a floor for the store's own cost and say nothing about a network.
 - **SQLite saves wait for the disk.** Each save is a transaction of its own, so its rate is the disk's.
 - **On Windows, .NET's `Task.Delay` wakes on a 15.6 ms timer tick.** None of the scenarios above waits, so none is affected. Rust's `tokio::time::sleep` hasn't been measured. A scenario that simulates latency, such as a model call of a few milliseconds, is distorted by this: a .NET process doesn't get the 1 ms tick another program may have asked for (Windows 10 2004 and later), so a `Task.Delay(5)` takes about 15 ms. Under load the waits also end together on a tick, so work reaches the engine or the store in bursts real I/O doesn't make. Real runs resume when a network call completes, not on a tick. On Windows, wait on a timer created with `CREATE_WAITABLE_TIMER_HIGH_RESOLUTION`, or call `timeBeginPeriod(1)` for the process, or run on Linux. Issue #40 measured the difference: 64 writers saving 2–10 ms apart through Postgres group commit made 3,600 saves a second with `Task.Delay` and 7,800 with high-resolution waits.
+- **A burst of runs that wait is bound by memory, not by the engine's CPU.** None of the scenarios above is one. When many runs are in flight at once and their handlers wait, what each run holds sets the rate (`design/49-Burst-Throughput.md`). Two runtime defaults matter more than the engine there. .NET's server GC adapts its heap count (DATAS, on since .NET 9) and held a burst of 100,000 runs to a few heaps; `DOTNET_GCDynamicAdaptationMode=0` made it about 5 times faster (a million runs, 1.4 times). Rust on Windows' system allocator ran a burst of a million runs on about 6 cores; mimalloc made it about 3 times faster (100,000 runs, 1.4 times). Say which you measured with.
 - **A 64 KiB command to a container is slow on Docker Desktop.** On the machine `RESULTS.md` names, a single Postgres or Redis command carrying 32 to 64 KB takes about 44 ms however it is sent (the port forwarding and TCP's delayed acknowledgement; `design/41`, "Implementation Status"). `store_save_large`'s whole rows against Postgres and Redis measure that, not the store.
 
 ## Updating `RESULTS.md`

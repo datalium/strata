@@ -13,7 +13,7 @@ internal delegate Task<TResult> BranchLauncher<TResult>(int index, BranchLaunch 
 
 /// <summary>
 /// What a branch is started with: its qualified path (<c>"&lt;group&gt;/&lt;branch&gt;"</c>), its span,
-/// and its own token (the siblings' token plus its own timeout).
+/// and its token: the siblings' one, or with a timeout one of its own that the timeout cancels too.
 /// </summary>
 internal readonly record struct BranchLaunch(string Path, Activity? Activity, CancellationToken Token);
 
@@ -100,7 +100,9 @@ internal static class FanOutRunner
         var groupActivity = Activity.Current;
 
         using var siblings = CancellationTokenSource.CreateLinkedTokenSource(inputs.Token);
-        var sources = new List<CancellationTokenSource>();
+
+        // A branch's own timer and token, only when branches have a timeout.
+        List<CancellationTokenSource>? sources = null;
         var outcomes = new BranchOutcome<TResult>?[count];
         var scopes = new BranchScope?[count];
         var running = new Dictionary<Task<Settled<TResult>>, int>();
@@ -165,7 +167,7 @@ internal static class FanOutRunner
         }
         finally
         {
-            foreach (var source in sources)
+            foreach (var source in sources ?? [])
             {
                 source.Dispose();
             }
@@ -197,30 +199,29 @@ internal static class FanOutRunner
 
         // Starts one branch inside its own span, which the launcher (and a sync handler's thread) sees
         // as current; the fan-out's span is current again once it has started. Its token is the
-        // siblings' one, plus its own timeout on the run's clock when there is one.
+        // siblings' one, plus its own timeout on the run's clock when there is one. Without a timeout
+        // nothing cancels a branch apart from its siblings, so it watches the siblings' token itself
+        // (design/49-Burst-Throughput.md).
         Task<Settled<TResult>> Start(int index)
         {
             CancellationTokenSource? timer = null;
-            CancellationTokenSource own;
+            var token = siblings.Token;
             if (settings.Timeout is { } timeout)
             {
                 timer = new CancellationTokenSource(timeout, inputs.Level.Run.Clock);
-                sources.Add(timer);
-                own = CancellationTokenSource.CreateLinkedTokenSource(siblings.Token, timer.Token);
-            }
-            else
-            {
-                own = CancellationTokenSource.CreateLinkedTokenSource(siblings.Token);
+                var own = CancellationTokenSource.CreateLinkedTokenSource(siblings.Token, timer.Token);
+                (sources ??= []).Add(timer);
+                sources.Add(own);
+                token = own.Token;
             }
 
-            sources.Add(own);
             var path = $"{inputs.Context.NodePath}/{names[index]}";
             var scope = inputs.Level.Run.Telemetry.BranchStarted(path, inputs.Context.Attempt);
             scopes[index] = scope;
             Task<TResult> task;
             try
             {
-                task = launch(index, new BranchLaunch(path, scope.Activity, own.Token));
+                task = launch(index, new BranchLaunch(path, scope.Activity, token));
             }
             catch (Exception ex)
             {
@@ -231,7 +232,7 @@ internal static class FanOutRunner
                 Activity.Current = groupActivity;
             }
 
-            return Settle(names[index], task, own.Token, timer, siblings.Token, settings);
+            return Settle(names[index], task, token, timer, siblings.Token, settings);
         }
 
         // Counts a settled branch towards the join and ends its scope.

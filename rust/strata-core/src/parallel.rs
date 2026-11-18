@@ -589,13 +589,34 @@ enum Settled<S> {
     Panicked(Box<dyn Any + Send>),
 }
 
+/// What a branch's work resolves to: its result, or the panic it raised.
+type Finished<S> = Result<Result<S, NodeError>, Box<dyn Any + Send>>;
+
 /// One branch's work, resolved to its result or the panic it raised.
-pub(crate) type BranchWork<S> =
-    BoxFuture<'static, Result<Result<S, NodeError>, Box<dyn Any + Send>>>;
+pub(crate) type BranchWork<S> = BoxFuture<'static, Finished<S>>;
+
+/// How a branch the fan-out stopped waiting on as it finished settled.
+fn as_settled<S>(finished: Finished<S>) -> Settled<S> {
+    match finished {
+        Ok(Ok(state)) => Settled::Succeeded(state),
+        Ok(Err(error)) => Settled::Failed(error),
+        Err(panic) => Settled::Panicked(panic),
+    }
+}
+
+/// How a branch that winds down (a map's item) settled once it stopped: if
+/// its token fired and it didn't succeed, its token is what stopped it.
+fn as_wound_down<S>(finished: Finished<S>, token: &CancellationToken) -> Settled<S> {
+    match finished {
+        Ok(Ok(state)) => Settled::Succeeded(state),
+        _ if token.is_cancelled() => Settled::Cancelled,
+        finished => as_settled(finished),
+    }
+}
 
 /// What a branch of a fan-out is started with: its qualified path
-/// (`"<group>/<branch>"`), its span, and its own token (the siblings' token,
-/// cancelled by its own timeout too).
+/// (`"<group>/<branch>"`), its span, and its token: the siblings' one, or with
+/// a timeout one of its own that the timeout cancels too.
 pub(crate) struct Launch {
     pub(crate) path: Arc<str>,
     pub(crate) span: Span,
@@ -699,8 +720,11 @@ where
         }
     }
 
-    /// Starts one branch inside its own span, with its own token (a child of
-    /// the siblings' one) and its own timeout, on tokio's clock.
+    /// Starts one branch inside its own span. With a timeout, on tokio's
+    /// clock, it has a token of its own (a child of the siblings' one) for the
+    /// timeout to cancel. Without one nothing cancels a branch apart from its
+    /// siblings, so it watches the siblings' token itself, and its task holds
+    /// no timer (`design/49-Burst-Throughput.md`).
     fn start(&mut self, index: usize) {
         let name = &self.names[index];
         // One copy of the path, shared by the branch's telemetry, its
@@ -708,7 +732,11 @@ where
         let path: Arc<str> = Arc::from(format!("{}/{name}", self.inputs.context.node_path()));
         let scope =
             BranchScope::start(&self.telemetry, path.clone(), self.inputs.context.attempt());
-        let token = self.siblings.child_token();
+        let timeout = self.settings.timeout;
+        let token = match timeout {
+            Some(_) => self.siblings.child_token(),
+            None => self.siblings.clone(),
+        };
         let mut work = (self.launch)(
             index,
             Launch {
@@ -717,61 +745,60 @@ where
                 token: token.clone(),
             },
         );
-        let timeout = self.settings.timeout;
         let winds_down = self.settings.winds_down;
-        // Only a branch with a timeout can time out, so only it needs the words.
-        let message = match timeout {
-            Some(timeout) => format!(
-                "{} '{name}' timed out after {} ms",
-                self.settings.noun.one,
-                timeout.as_millis()
-            ),
-            None => String::new(),
-        };
-        self.set.spawn(async move {
-            let expiry = async {
-                match timeout {
-                    Some(duration) => tokio::time::sleep(duration).await,
-                    None => std::future::pending().await,
-                }
-            };
-            let settled = if winds_down {
-                // A branch that is a graph is waited for until it has
-                // stopped; if its token fired and it didn't succeed, its
-                // token is what stopped it.
-                let finished = tokio::select! {
-                    biased;
-                    result = &mut work => Some(result),
-                    _ = expiry => {
-                        token.cancel();
-                        let _ = work.await;
-                        None
-                    }
-                };
-                match finished {
-                    None => Settled::TimedOut(NodeError::Transient(message)),
-                    Some(Ok(Ok(state))) => Settled::Succeeded(state),
-                    Some(_) if token.is_cancelled() => Settled::Cancelled,
-                    Some(Ok(Err(error))) => Settled::Failed(error),
-                    Some(Err(panic)) => Settled::Panicked(panic),
-                }
-            } else {
-                tokio::select! {
-                    biased;
-                    result = work => match result {
-                        Ok(Ok(state)) => Settled::Succeeded(state),
-                        Ok(Err(error)) => Settled::Failed(error),
-                        Err(panic) => Settled::Panicked(panic),
-                    },
-                    _ = token.cancelled() => Settled::Cancelled,
-                    _ = expiry => {
-                        token.cancel();
-                        Settled::TimedOut(NodeError::Transient(message))
-                    }
-                }
-            };
-            (index, settled)
-        });
+        match timeout {
+            None if winds_down => {
+                self.set.spawn(async move {
+                    // A branch that is a graph is waited for until it has
+                    // stopped; if its token fired and it didn't succeed, its
+                    // token is what stopped it.
+                    (index, as_wound_down(work.await, &token))
+                });
+            }
+            None => {
+                self.set.spawn(async move {
+                    let settled = tokio::select! {
+                        biased;
+                        result = work => as_settled(result),
+                        _ = token.cancelled() => Settled::Cancelled,
+                    };
+                    (index, settled)
+                });
+            }
+            Some(timeout) => {
+                // Only a branch with a timeout can time out, so only it needs the words.
+                let message = format!(
+                    "{} '{name}' timed out after {} ms",
+                    self.settings.noun.one,
+                    timeout.as_millis()
+                );
+                self.set.spawn(async move {
+                    let expiry = tokio::time::sleep(timeout);
+                    let settled = if winds_down {
+                        tokio::select! {
+                            biased;
+                            result = &mut work => as_wound_down(result, &token),
+                            _ = expiry => {
+                                token.cancel();
+                                let _ = work.await;
+                                Settled::TimedOut(NodeError::Transient(message))
+                            }
+                        }
+                    } else {
+                        tokio::select! {
+                            biased;
+                            result = work => as_settled(result),
+                            _ = token.cancelled() => Settled::Cancelled,
+                            _ = expiry => {
+                                token.cancel();
+                                Settled::TimedOut(NodeError::Transient(message))
+                            }
+                        }
+                    };
+                    (index, settled)
+                });
+            }
+        }
         self.scopes[index] = Some(scope);
         self.running[index] = true;
         self.in_flight += 1;
@@ -937,9 +964,12 @@ where
 ///
 /// `inputs.stream` is the group's own [`StreamContext`] when the run is
 /// streaming; each branch gets a copy of it retargeted at `"<group>/<branch>"`.
+/// `names` are the branches' names in declaration order, made once when the
+/// group was added (`design/49-Burst-Throughput.md`).
 pub(crate) async fn run_branches<S>(
     group: &str,
     branches: &[(String, Branch<S>)],
+    names: &[String],
     options: &ParallelGroupOptions<S>,
     state: S,
     inputs: AttemptInputs,
@@ -948,7 +978,6 @@ where
     S: Clone + Send + Sync + 'static,
 {
     let state = Arc::new(state);
-    let names: Vec<String> = branches.iter().map(|(name, _)| name.clone()).collect();
     let context = inputs.context.clone();
     let stream = inputs.stream.clone();
     let mut launch = move |index: usize, started: Launch| -> BranchWork<S> {
@@ -1002,7 +1031,7 @@ where
         noun: Noun::BRANCH,
         winds_down: false,
     };
-    run_fan_out(&names, &mut launch, &settings, &inputs).await
+    run_fan_out(names, &mut launch, &settings, &inputs).await
 }
 
 /// Starts the branches of a fan-out (a parallel group's, or a map's items), at
