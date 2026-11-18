@@ -151,7 +151,7 @@ public static class StrataDriverExtensions
     public static IStrataBuilder AddDecisionWorker<TState>(this IStrataBuilder builder, Func<IServiceProvider, DecisionWorkerOptions<TState>>? options = null);
 }
 public sealed class WakeDriverOptions      { Interval = 5 s;  BatchSize = 100; Metadata; MatchGraph = true; }                          // Strata:Wake
-public sealed class RecoveryDriverOptions  { Interval = 30 s; BatchSize = 100; StaleAfter; MaxRecoveries; Metadata; MatchGraph = true; } // Strata:Recovery
+public sealed class RecoveryDriverOptions  { Interval = 30 s; BatchSize = 100; StaleAfter; MaxRecoveries; MaxConcurrency = 8; Metadata; MatchGraph = true; } // Strata:Recovery
 public sealed class RetentionOptions       { Interval = 1 h;  BatchSize = 1000; OlderThan (required); States = completed, ended; }      // Strata:Retention
 
 // Health and instrumentation.
@@ -197,7 +197,7 @@ impl Host {
 }
 
 pub struct WakeDriver { /* interval, batch_size, metadata, match_graph, config */ }        // Deserialize, Default, with_*
-pub struct RecoveryDriver { /* interval, batch_size, stale_after, max_recoveries, …, config */ }
+pub struct RecoveryDriver { /* interval, batch_size, stale_after, max_recoveries, max_concurrency, …, config */ }
 pub struct RetentionDriver { /* interval, batch_size, older_than, states */ }
 
 pub struct StrataSettings { pub postgres: PostgresSettings, pub redis: RedisSettings, pub sqlite: SqliteSettings,
@@ -244,7 +244,7 @@ A driver is a loop: do one round, wait `Interval`, again. A round is one call:
 | Driver | A round |
 |---|---|
 | Wake | `WakeDueAsync` with `Limit = BatchSize`, again while a call fills its batch and woke something. |
-| Recovery | `RecoverStaleAsync` with `Limit = BatchSize`, again while a call recovers a whole batch. Needs a graph compiled with `EveryNode`, and a lease in the run defaults or a `StaleAfter`: without either the host doesn't start. |
+| Recovery | `RecoverStaleAsync` with `Limit = BatchSize` and `MaxConcurrency` (8 by default, where the library call's is 1), again while a call recovers a whole batch. Needs a graph compiled with `EveryNode`, and a lease in the run defaults or a `StaleAfter`: without either the host doesn't start. |
 | Retention | `PurgeAsync(now − OlderThan, States, BatchSize)`, again while a call returns `BatchSize`. `OlderThan` has no default: an application says how long it keeps its threads. |
 | Decisions | `DecisionWorker.RunAsync` (it has its own polling and back-off, `design/30`) |
 

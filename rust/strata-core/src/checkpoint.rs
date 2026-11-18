@@ -25,6 +25,8 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
+use futures_util::StreamExt;
+use futures_util::stream::FuturesUnordered;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -3384,6 +3386,9 @@ where
         if options.max_recoveries == Some(0) {
             return Err(refuse("max_recoveries must be at least 1".to_string()));
         }
+        if options.max_concurrency == 0 {
+            return Err(refuse("max_concurrency must be at least 1".to_string()));
+        }
         if !self.durable() {
             return Err(refuse(NOT_DURABLE.to_string()));
         }
@@ -3420,12 +3425,22 @@ where
                     .as_ref()
                     .is_some_and(CancellationToken::is_cancelled)
         };
-        let mut report = RecoveryReport {
-            recovered: Vec::new(),
-            skipped: Vec::new(),
+        // Up to max_concurrency threads at once. A thread is started only while
+        // the recoveries done and in flight are fewer than the limit, so the
+        // call never recovers more; each outcome keeps its place in the
+        // listing.
+        let mut running = FuturesUnordered::new();
+        let mut outcomes: Vec<(usize, Outcome<S>)> = Vec::new();
+        let mut recovered = 0;
+        let mut listed = 0;
+        let settle = |outcomes: &mut Vec<(usize, Outcome<S>)>,
+                      recovered: &mut usize,
+                      (index, outcome): (usize, Outcome<S>)| {
+            *recovered += usize::from(matches!(outcome, Outcome::Recovered(_)));
+            outcomes.push((index, outcome));
         };
         let mut cursor = None;
-        loop {
+        'listing: loop {
             let mut query = ThreadQuery::default().with_states([ThreadState::Running]);
             query.metadata = options.metadata.clone();
             query.updated_before = stale_before;
@@ -3440,47 +3455,91 @@ where
                     .flatten();
             }
             query.cursor = cursor.take();
-            let page = store
-                .list_threads(&query)
-                .await
-                .map_err(|err| refuse(err.0))?;
-            for thread in page.threads {
-                if report.recovered.len() >= options.limit || cancelled() {
-                    return Ok(report);
+            let page = match store.list_threads(&query).await {
+                Ok(page) => page,
+                Err(err) => {
+                    // The recoveries in flight finish first.
+                    while running.next().await.is_some() {}
+                    return Err(refuse(err.0));
                 }
-                self.recover_one(
-                    &thread,
-                    stale_text.as_deref(),
-                    &options,
-                    &as_store,
-                    &mut report,
-                )
-                .await;
+            };
+            for thread in page.threads {
+                while !running.is_empty()
+                    && (running.len() >= options.max_concurrency
+                        || recovered + running.len() >= options.limit)
+                {
+                    if let Some(done) = running.next().await {
+                        settle(&mut outcomes, &mut recovered, done);
+                    }
+                }
+                if recovered >= options.limit || cancelled() {
+                    break 'listing;
+                }
+                let index = listed;
+                listed += 1;
+                let (stale_text, options, store) = (stale_text.as_deref(), &options, &as_store);
+                running.push(async move {
+                    (
+                        index,
+                        self.recover_one(&thread, stale_text, options, store).await,
+                    )
+                });
             }
             match page.next_cursor {
-                Some(next) if report.recovered.len() < options.limit && !cancelled() => {
-                    cursor = Some(next);
-                }
-                _ => return Ok(report),
+                Some(next) if recovered < options.limit && !cancelled() => cursor = Some(next),
+                _ => break,
             }
         }
+        while let Some(done) = running.next().await {
+            settle(&mut outcomes, &mut recovered, done);
+        }
+
+        outcomes.sort_by_key(|(index, _)| *index);
+        let mut report = RecoveryReport {
+            recovered: Vec::new(),
+            skipped: Vec::new(),
+        };
+        for (_, outcome) in outcomes {
+            match outcome {
+                Outcome::Recovered(thread) => report.recovered.push(thread),
+                Outcome::Skipped(thread) => report.skipped.push(thread),
+            }
+        }
+        Ok(report)
     }
 
-    /// Decides again whether `thread_id` is running, stale, this graph's and
-    /// nobody's, then recovers it.
+    /// Decides again whether `thread_id` is nobody's, running, stale and this
+    /// graph's, then recovers it.
     async fn recover_one(
         &self,
         listed: &ThreadSummary,
         stale_before: Option<&str>,
         options: &RecoverOptions,
         store: &Arc<dyn CheckpointStore>,
-        report: &mut RecoveryReport<S>,
-    ) {
+    ) -> Outcome<S> {
         let thread_id = listed.thread_id.as_str();
-        let skip = |reason: String| SkippedThread {
-            thread_id: thread_id.to_string(),
-            reason,
+        let skip = |reason: String| {
+            Outcome::Skipped(SkippedThread {
+                thread_id: thread_id.to_string(),
+                reason,
+            })
         };
+        // Whoever holds a running thread is running it. Checked first, before
+        // a slot is taken or anything loaded, so a sweep over live threads is
+        // one read each and no events; the recovery checks again when it
+        // claims.
+        match store.get_lease(thread_id).await {
+            Ok(None) => {}
+            Err(err) if err.0 == NO_LEASES => {}
+            Ok(Some(live)) => {
+                return skip(format!(
+                    "it is held by '{}' until {}",
+                    live.owner,
+                    wake_text(live.expires_at)
+                ));
+            }
+            Err(err) => return skip(format!("its lease can't be read: {}", err.0)),
+        }
         // With a scheduler, a slot first (design/40-Run-Scheduler.md).
         let mut config = options.config.clone();
         let _slot = match config
@@ -3488,77 +3547,44 @@ where
             .await
         {
             Ok(slot) => slot,
-            Err(refused) => {
-                return report
-                    .skipped
-                    .push(skip(format!("it was not admitted: {refused}")));
-            }
+            Err(refused) => return skip(format!("it was not admitted: {refused}")),
         };
         // With its sequence: the claim is conditional on it.
         let mut latest = match load_checkpoint(store, thread_id).await {
             Ok(Some(latest)) => latest,
-            Ok(None) => {
-                return report
-                    .skipped
-                    .push(skip("it has no checkpoint".to_string()));
-            }
-            Err(err) => {
-                return report
-                    .skipped
-                    .push(skip(format!("its checkpoint can't be loaded: {}", err.0)));
-            }
+            Ok(None) => return skip("it has no checkpoint".to_string()),
+            Err(err) => return skip(format!("its checkpoint can't be loaded: {}", err.0)),
         };
         let checkpoint = &latest.checkpoint;
         if !schema::is_supported_checkpoint_version(&checkpoint.schema_version) {
-            return report.skipped.push(skip(format!(
+            return skip(format!(
                 "its checkpoint has unsupported schema_version '{}'",
                 checkpoint.schema_version
-            )));
+            ));
         }
         if checkpoint.status != CheckpointStatus::Running {
-            return report
-                .skipped
-                .push(skip("it is no longer running".to_string()));
+            return skip("it is no longer running".to_string());
         }
         if stale_before.is_some_and(|before| updated_at_text(checkpoint) >= before) {
-            return report.skipped.push(skip("it is not stale yet".to_string()));
+            return skip("it is not stale yet".to_string());
         }
         let recoveries = recoveries_of(checkpoint);
         if options.max_recoveries.is_some_and(|max| recoveries >= max) {
-            return report.skipped.push(skip(format!(
+            return skip(format!(
                 "it was recovered {recoveries} time(s) without a node completing"
-            )));
+            ));
         }
         // Another graph's thread is skipped, and another version's migrated
         // (design/31-Graph-Identity.md).
         match self.adopt(checkpoint, thread_id, &[]) {
             Ok(Some(adopted)) => latest.checkpoint = adopted,
             Ok(None) => {}
-            Err(problem) => return report.skipped.push(skip(problem)),
+            Err(problem) => return skip(problem),
         }
         let checkpoint = &latest.checkpoint;
         let check = self.check_resume(checkpoint, &LevelSignals::none(), thread_id, &[]);
         if let Some(problem) = check.problem {
-            return report.skipped.push(skip(problem));
-        }
-        // Whoever holds a running thread is running it. Checked here, before
-        // a run is started for it, so a sweep over live threads is one read
-        // each and no events; the recovery checks again when it claims.
-        match store.get_lease(thread_id).await {
-            Ok(None) => {}
-            Err(err) if err.0 == NO_LEASES => {}
-            Ok(Some(live)) => {
-                return report.skipped.push(skip(format!(
-                    "it is held by '{}' until {}",
-                    live.owner,
-                    wake_text(live.expires_at)
-                )));
-            }
-            Err(err) => {
-                return report
-                    .skipped
-                    .push(skip(format!("its lease can't be read: {}", err.0)));
-            }
+            return skip(problem);
         }
 
         let at = continues_at(checkpoint);
@@ -3578,21 +3604,25 @@ where
         // A thread another owner holds is theirs
         // (design/32-Thread-Leases.md).
         if let Some(held) = root.level.run.held() {
-            return report.skipped.push(skip(format!("it is {held}")));
+            return skip(format!("it is {held}"));
         }
         if root.level.run.superseded.load(Ordering::Relaxed) {
-            report
-                .skipped
-                .push(skip("another run or recovery got there first".to_string()));
+            skip("another run or recovery got there first".to_string())
         } else {
-            report.recovered.push(RecoveredThread {
+            Outcome::Recovered(RecoveredThread {
                 thread_id: thread_id.to_string(),
                 at,
                 recoveries: recoveries + 1,
                 result,
-            });
+            })
         }
     }
+}
+
+/// What [`CompiledGraph::recover_stale`] did with one listed thread.
+enum Outcome<S> {
+    Recovered(RecoveredThread<S>),
+    Skipped(SkippedThread),
 }
 
 /// Event waits and durable timers (`design/29-Event-Waits-And-Timers.md`, SG-16).

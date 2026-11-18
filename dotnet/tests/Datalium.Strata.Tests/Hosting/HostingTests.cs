@@ -280,6 +280,7 @@ public class HostingTests
             ["Strata:Recovery:Interval"] = "00:00:15",
             ["Strata:Recovery:StaleAfter"] = "00:10:00",
             ["Strata:Recovery:MaxRecoveries"] = "3",
+            ["Strata:Recovery:MaxConcurrency"] = "4",
             ["Strata:Retention:OlderThan"] = "30.00:00:00",
             ["Strata:Retention:States:0"] = "Completed",
             ["Strata:Retention:States:1"] = "Failed",
@@ -328,8 +329,8 @@ public class HostingTests
 
         var recovery = Named<RecoveryDriverOptions>();
         Assert.Equal(
-            (TimeSpan.FromSeconds(15), TimeSpan.FromMinutes(10), 3),
-            (recovery.Interval, recovery.StaleAfter, recovery.MaxRecoveries));
+            (TimeSpan.FromSeconds(15), TimeSpan.FromMinutes(10), 3, 4),
+            (recovery.Interval, recovery.StaleAfter, recovery.MaxRecoveries, recovery.MaxConcurrency));
 
         var retention = Get<RetentionOptions>();
         Assert.Equal((TimeSpan.FromMinutes(10), TimeSpan.FromDays(30)), (retention.Interval, retention.OlderThan));
@@ -350,7 +351,7 @@ public class HostingTests
         var wake = provider.GetRequiredService<IOptionsMonitor<WakeDriverOptions>>().Get(typeof(Tick).FullName);
         Assert.Equal((TimeSpan.FromSeconds(5), 100, true), (wake.Interval, wake.BatchSize, wake.MatchGraph));
         var recovery = provider.GetRequiredService<IOptionsMonitor<RecoveryDriverOptions>>().Get(typeof(Tick).FullName);
-        Assert.Equal((TimeSpan.FromSeconds(30), 100), (recovery.Interval, recovery.BatchSize));
+        Assert.Equal((TimeSpan.FromSeconds(30), 100, 8), (recovery.Interval, recovery.BatchSize, recovery.MaxConcurrency));
         Assert.Null(recovery.StaleAfter);
         var retention = provider.GetRequiredService<IOptions<RetentionOptions>>().Value;
         Assert.Equal((TimeSpan.FromHours(1), 1000), (retention.Interval, retention.BatchSize));
@@ -427,6 +428,10 @@ public class HostingTests
             "the recovery driver needs Strata:Runs:Lease:Ttl or Strata:Recovery:StaleAfter",
             await Refusal(strata => strata.AddInMemoryCheckpoints().AddGraph(_ => DurableGraph()).AddRecoveryDriver<Tick>()),
             StringComparison.Ordinal);
+        Assert.Equal(
+            "the recovery driver's MaxConcurrency must be at least 1",
+            await Refusal(strata => strata.AddInMemoryCheckpoints().AddGraph(_ => DurableGraph())
+                .AddRecoveryDriver<Tick>(o => o.MaxConcurrency = 0)));
 
         Assert.StartsWith(
             "the retention driver needs Strata:Retention:OlderThan",

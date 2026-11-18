@@ -65,6 +65,7 @@ pub struct RecoverOptions {
     pub(crate) metadata: BTreeMap<String, String>,
     pub(crate) match_graph: bool,
     pub(crate) limit: usize,
+    pub(crate) max_concurrency: usize,
     pub(crate) config: RunConfig,
     pub(crate) stop: Option<CancellationToken>,
 }
@@ -77,6 +78,7 @@ impl Default for RecoverOptions {
             metadata: BTreeMap::new(),
             match_graph: true,
             limit: DEFAULT_PAGE_SIZE,
+            max_concurrency: 1,
             config: RunConfig::default(),
             stop: None,
         }
@@ -138,6 +140,19 @@ impl RecoverOptions {
         self
     }
 
+    /// How many threads are checked and recovered at once: at least 1, and 1
+    /// (one at a time) by default. A recovery is a run like any other, so one
+    /// at a time recovers a dead worker's threads at one run's latency each; a
+    /// worker that ran many at once is recovered about as fast as it ran them
+    /// with a value near its own. The claims are conditional and the leases
+    /// fence, so two recoveries of one call never both run a thread. With a
+    /// run scheduler (`design/40-Run-Scheduler.md`) each recovery also waits
+    /// for a slot. The recoveries run concurrently in the calling task.
+    pub fn with_max_concurrency(mut self, max_concurrency: usize) -> Self {
+        self.max_concurrency = max_concurrency;
+        self
+    }
+
     /// The config of each recovery, which is a run of its own: its lease
     /// (every worker's, or none's), its metadata, observer and services, and
     /// the token that is also checked between threads.
@@ -147,7 +162,7 @@ impl RecoverOptions {
     }
 
     /// When `stop` fires, the call recovers no more threads and returns what
-    /// it did; the recovery in flight finishes. Unlike the config's
+    /// it did; the recoveries in flight finish. Unlike the config's
     /// cancellation token, which also cancels that run. How a host stops a
     /// driver without leaving a thread cancelled
     /// (`design/35-Hosting-Integration.md`, "Stopping").

@@ -672,6 +672,19 @@ async fn a_driver_without_what_it_needs_stops_the_host_from_starting() {
             .await
             .starts_with("the recovery driver needs a lease in its run config or a stale_after")
     );
+    assert_eq!(
+        refusal(
+            Host::new().recover(
+                durable_graph(),
+                store.clone(),
+                RecoveryDriver::new()
+                    .with_stale_after(month)
+                    .with_max_concurrency(0)
+            )
+        )
+        .await,
+        "the recovery driver's max_concurrency must be at least 1"
+    );
 
     assert!(
         refusal(Host::new().retain(store.clone(), RetentionDriver::new()))

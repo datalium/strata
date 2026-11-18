@@ -102,7 +102,7 @@ fn settings_come_from_any_serde_source() {
         "sqlite": { "path": "strata.sqlite" },
         "runs": { "lease": { "owner": "worker-7", "ttl": 30 } },
         "wake": { "interval": "2s", "batch_size": 10, "metadata": { "graph": "investigation" }, "match_graph": false },
-        "recovery": { "interval": 15, "stale_after": "10m", "max_recoveries": 3 },
+        "recovery": { "interval": 15, "stale_after": "10m", "max_recoveries": 3, "max_concurrency": 4 },
         "retention": { "interval": "10m", "older_than": "30d", "states": ["completed", "failed"] }
     }))
     .unwrap();
@@ -162,6 +162,7 @@ fn settings_come_from_any_serde_source() {
         Some(Duration::from_secs(600))
     );
     assert_eq!(settings.recovery.max_recoveries, Some(3));
+    assert_eq!(settings.recovery.max_concurrency, 4);
 
     assert_eq!(settings.retention.interval, Duration::from_secs(600));
     assert_eq!(
@@ -205,9 +206,10 @@ fn without_a_source_every_setting_has_its_default() {
         (
             settings.recovery.interval,
             settings.recovery.batch_size,
-            settings.recovery.stale_after
+            settings.recovery.stale_after,
+            settings.recovery.max_concurrency
         ),
-        (Duration::from_secs(30), 100, None)
+        (Duration::from_secs(30), 100, None, 8)
     );
     assert_eq!(
         (

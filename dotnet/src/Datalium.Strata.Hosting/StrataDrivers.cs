@@ -49,6 +49,14 @@ public sealed class RecoveryDriverOptions
     /// <summary>The most times a thread is recovered without a node committing in between (<see cref="RecoverOptions.MaxRecoveries"/>).</summary>
     public int? MaxRecoveries { get; set; }
 
+    /// <summary>
+    /// How many threads are checked and recovered at once (<see cref="RecoverOptions.MaxConcurrency"/>): at least 1, and
+    /// 8 by default, where the library call's default is 1. Each recovery re-runs the node that was in flight, on top
+    /// of the process's own runs, so a process near its model's rate limit or its database pool sets it lower, and 1
+    /// recovers one at a time.
+    /// </summary>
+    public int MaxConcurrency { get; set; } = 8;
+
     /// <summary>Only threads whose latest checkpoint's metadata has every pair.</summary>
     public Dictionary<string, string> Metadata { get; } = new(StringComparer.Ordinal);
 
@@ -268,6 +276,11 @@ internal sealed class RecoveryDriver<TState>(
     {
         var options = services.GetRequiredService<IOptionsMonitor<RecoveryDriverOptions>>().Get(StrataDriverExtensions.GraphName<TState>());
         StrataDriverExtensions.CheckPacing("recovery", options.Interval, options.BatchSize);
+        if (options.MaxConcurrency < 1)
+        {
+            throw new InvalidOperationException("the recovery driver's MaxConcurrency must be at least 1");
+        }
+
         var graph = StrataDriverExtensions.Graph<TState>(services, "recovery");
         StrataDriverExtensions.Store(services, "recovery");
         if (graph.Checkpointing != CheckpointPolicy.EveryNode)
@@ -296,6 +309,7 @@ internal sealed class RecoveryDriver<TState>(
                     {
                         StaleAfter = _options.StaleAfter,
                         MaxRecoveries = _options.MaxRecoveries,
+                        MaxConcurrency = _options.MaxConcurrency,
                         Metadata = _options.Metadata,
                         MatchGraph = _options.MatchGraph,
                         Limit = _options.BatchSize,

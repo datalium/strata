@@ -16,6 +16,7 @@ categories.workspace = true
 base64 = "0.23"
 chrono = "0.4"
 datalium-strata-macros = { workspace = true }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 metrics = "0.24"
 pin-project-lite = "0.2"
 serde = { version = "1", features = ["derive"] }

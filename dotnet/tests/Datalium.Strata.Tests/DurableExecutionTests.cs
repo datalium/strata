@@ -98,6 +98,57 @@ public class DurableExecutionTests(ITestOutputHelper output)
             new(stale);
     }
 
+    /// <summary>A process that remembers which threads' latest checkpoints it loaded.</summary>
+    private sealed class Counted(InMemoryCheckpointStore inner) : Process(inner)
+    {
+        private readonly ConcurrentQueue<string> _loads = new();
+
+        public List<string> Loads => [.. _loads];
+
+        public override ValueTask<LatestCheckpoint?> LoadLatestAsync(string threadId, CancellationToken cancellationToken = default)
+        {
+            _loads.Enqueue(threadId);
+            return base.LoadLatestAsync(threadId, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Where recoveries meet: each waits, up to <see cref="Patience"/>, for <paramref name="size"/> to be inside at
+    /// once, until they have been once. <see cref="Most"/> is the most that were ever inside together.
+    /// </summary>
+    private sealed class Rendezvous(int size)
+    {
+        private int _inside;
+        private int _most;
+
+        public int Most => Volatile.Read(ref _most);
+
+        public async ValueTask MeetAsync()
+        {
+            var now = Interlocked.Increment(ref _inside);
+            for (var seen = Most; seen < now; seen = Most)
+            {
+                if (Interlocked.CompareExchange(ref _most, now, seen) == seen)
+                {
+                    break;
+                }
+            }
+
+            try
+            {
+                var deadline = DateTime.UtcNow + Patience;
+                while (Most < size && DateTime.UtcNow < deadline)
+                {
+                    await Task.Delay(1);
+                }
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _inside);
+            }
+        }
+    }
+
     /// <summary>One run of a handler: where, under which key, and whether it may have run before.</summary>
     private sealed record Visit(string Path, string Key, bool Recovery)
     {
@@ -159,6 +210,27 @@ public class DurableExecutionTests(ITestOutputHelper output)
     }
 
     private static CompiledGraph<Job> Line(Journal journal, params string[] nodes) => Chain(journal, nodes).Compile(Durable);
+
+    /// <summary><c>A</c> -> <c>B</c> -> <c>C</c>, where a recovery of <c>B</c> first meets the others at <paramref name="rendezvous"/>.</summary>
+    private static CompiledGraph<Job> Meeting(Journal journal, Rendezvous rendezvous)
+    {
+        Func<Job, NodeContext, CancellationToken, ValueTask<Job>> meet = async (job, context, _) =>
+        {
+            if (context.IsRecovery)
+            {
+                await rendezvous.MeetAsync();
+            }
+
+            return journal.Visit(job, context);
+        };
+        return new StateGraph<Job>()
+            .AddNode("A", Node(journal))
+            .AddNode("B", meet)
+            .AddNode("C", Node(journal))
+            .AddEdge("A", "B")
+            .AddEdge("B", "C")
+            .Compile(Durable);
+    }
 
     /// <summary><c>A</c> (a boundary, rejected to <c>Rejected</c>) -> <c>B</c> -> <c>C</c>.</summary>
     private static CompiledGraph<Job> Approval(Journal journal) =>
@@ -982,6 +1054,83 @@ public class DurableExecutionTests(ITestOutputHelper output)
 
         // An operator can still recover it by hand, or end it.
         Assert.Equal("ABC", Completed(await graph.RecoverAsync("t", store)).Trail);
+    }
+
+    [Fact]
+    public async Task The_Driver_Recovers_Up_To_Its_Concurrency_At_Once_And_Reports_In_Listing_Order()
+    {
+        var store = new InMemoryCheckpointStore();
+        var journal = new Journal();
+        var rendezvous = new Rendezvous(2);
+        var graph = Meeting(journal, rendezvous);
+        foreach (var thread in new[] { "t1", "t2", "t3", "t4" })
+        {
+            await Crash(graph, journal, store, thread, "B");
+        }
+
+        var listed = (await store.ListThreadsAsync(new ThreadQuery { States = new HashSet<CheckpointThreadState> { CheckpointThreadState.Running } }))
+            .Threads.Select(t => t.ThreadId).ToList();
+
+        var report = await graph.RecoverStaleAsync(store, new RecoverOptions { StaleAfter = TimeSpan.Zero, MaxConcurrency = 2 });
+
+        // Two were inside B together, and never more.
+        Assert.Equal(2, rendezvous.Most);
+        Assert.Equal(listed, report.Recovered.Select(r => r.ThreadId));
+        Assert.All(report.Recovered, recovered => Assert.Equal("ABC", Completed(recovered.Result).Trail));
+        Assert.Empty(report.Skipped);
+    }
+
+    [Fact]
+    public async Task With_Concurrency_The_Driver_Still_Recovers_No_More_Than_Its_Limit()
+    {
+        var store = new InMemoryCheckpointStore();
+        var journal = new Journal();
+        var graph = Line(journal, "A", "B", "C");
+        string[] threads = ["t1", "t2", "t3", "t4", "t5"];
+        foreach (var thread in threads)
+        {
+            await Crash(graph, journal, store, thread, "B");
+        }
+
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
+            graph.RecoverStaleAsync(store, new RecoverOptions { StaleAfter = TimeSpan.Zero, MaxConcurrency = 0 }));
+
+        var report = await graph.RecoverStaleAsync(
+            store, new RecoverOptions { StaleAfter = TimeSpan.Zero, Limit = 2, MaxConcurrency = 4 });
+
+        Assert.Equal(2, report.Recovered.Count);
+        Assert.Empty(report.Skipped);
+        Assert.Equal(2, journal.Count("C"));
+        foreach (var thread in threads.Except(report.Recovered.Select(r => r.ThreadId)))
+        {
+            Assert.Equal("running:A>B", (await Shapes(store, thread))[^1]);
+        }
+    }
+
+    [Fact]
+    public async Task The_Driver_Skips_A_Live_Thread_Without_Loading_It()
+    {
+        var clock = new FakeTimeProvider(Noon);
+        var store = new InMemoryCheckpointStore(clock);
+        var journal = new Journal();
+        var graph = Line(journal, "A", "B", "C");
+        await Crash(graph, journal, store, "dead", "B", Leased(clock));
+        await Crash(
+            graph,
+            journal,
+            store,
+            "live",
+            "B",
+            new RunOptions { Lease = new LeaseOptions("worker-9", TimeSpan.FromHours(1)), TimeProvider = clock });
+        clock.Advance(Ttl + TimeSpan.FromMilliseconds(1));
+        var counted = new Counted(store);
+
+        var report = await graph.RecoverStaleAsync(counted, new RecoverOptions { Run = Leased(clock, "worker-2") });
+
+        Assert.Equal("dead", Assert.Single(report.Recovered).ThreadId);
+        Assert.Equal("live", Assert.Single(report.Skipped).ThreadId);
+        Assert.Contains("dead", counted.Loads);
+        Assert.DoesNotContain("live", counted.Loads);
     }
 
     [Fact]

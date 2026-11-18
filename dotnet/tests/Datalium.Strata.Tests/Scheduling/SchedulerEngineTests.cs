@@ -545,7 +545,7 @@ public sealed class SchedulerEngineTests
             $"it was not admitted: run not admitted: the scheduler's queue is full",
             Assert.Single(report.Skipped).Reason);
 
-        // Listed, and nothing more: the thread was never loaded.
-        Assert.Equal(1, store.Calls);
+        // Listed and its lease read, and nothing more: the thread was never loaded.
+        Assert.Equal(2, store.Calls);
     }
 }
