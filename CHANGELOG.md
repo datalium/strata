@@ -6,7 +6,25 @@ Every NuGet package, every crate and the `strata` CLI share one version and are 
 
 Each entry ends with the wire formats that version writes and reads. The rules behind them are in `schema/README.md`, "Compatibility".
 
-## Unreleased
+## 0.9.0-preview.3 (2026-11-19)
+
+A new validation check for graphs that can't reach an end (#50), a fix for a Rust run cancelled while a parallel group runs (#48), parallel groups and maps that allocate less (#37), Postgres listings and purges that no longer slow down as the store grows (#38), and recovery of several threads at once (#39). Measured against `0.9.0-preview.2` on one machine, a .NET parallel group of 32 branches runs in half the time and allocates about half as much, and a Rust one is 20 to 30% faster (`benchmarks/RESULTS.md`, finding 5).
+
+### Upgrading
+
+Change the version:
+
+- **.NET:** `dotnet add package Datalium.Strata.Hosting --version 0.9.0-preview.3`, or the same version on every `Datalium.Strata.*` reference.
+- **Rust:** `=0.9.0-preview.3` on every `datalium-strata*` crate. The crates pin each other exactly, so they move together.
+- **CLI:** download the binary from the `v0.9.0-preview.3` release.
+
+Then check these, in both engines unless named:
+
+- **A graph that compiled before can now fail to compile** with `STRATA_ERR_NO_TERMINAL`, if it has a node from which every path loops back. Give the loop an exit. To find such graphs before you upgrade, run the new CLI's `strata graph validate` on their exported definitions.
+- **Rust: a `match` on `ValidationErrorKind` that names every variant** needs an arm for `NoTerminal`.
+- **Rust: a client passed to `StrataCloudOptions::with_client`** must be a `reqwest` 0.13 client.
+- **Rust: HTTPS uses the operating system's certificates** instead of a bundled copy. An image with no CA certificates installed (built `FROM scratch`, say) needs them.
+- **The hosted recovery drivers recover 8 threads at once by default**, where they recovered one. Set `Strata:Recovery:MaxConcurrency` (.NET) or `max_concurrency` (Rust) to 1 for the old behaviour, or lower it if the process is close to its model's rate limit or its database pool.
 
 ### Changes
 
@@ -24,6 +42,11 @@ Each entry ends with the wire formats that version writes and reads. The rules b
 - **The hosted recovery drivers recover 8 threads at once by default.** `AddRecoveryDriver` (.NET) and `Host::recover` (Rust) used to recover one at a time. They now take `MaxConcurrency` / `max_concurrency` (`Strata:Recovery:MaxConcurrency`), default 8. Each recovery re-runs the node that was in flight, so a dead worker's recovery now adds up to 8 runs to the new worker's own. To recover one at a time as before, set it to 1; set it lower if the process is close to its model's rate limit or its database pool (#39). Rust's `datalium-strata` gains a dependency on `futures-util` (#39).
 - **Postgres: a page of a thread listing no longer slows down as the store grows, and a purge no longer scans every lease.** The head table's `thread_id` is in the `"C"` collation and the log's and the leases' are in the database's, so Postgres couldn't use their primary keys to join them. Each page of `ListThreadsAsync` / `list_threads` joined every matching thread: about half a second a page with a million threads, so listing them all took minutes. Each purge candidate scanned the whole `checkpoint_leases` table. Both now compare in the other table's collation and look each thread up in its primary key: about 2 ms a page at a million threads. Same results, in both engines, with no migration (#38).
 - **CLI: `ratatui` 0.30.** The CLI moved from `ratatui` 0.29 to 0.30, which pulls in `lru` 0.18 instead of 0.12. `lru` before 0.16.3 has a soundness advisory, GHSA-rhfx-m35p-ff5j. The CLI looks and behaves the same.
+- **`benchmarks/RESULTS.md` is measured again**, in one run on this version, with comparisons against `0.9.0-preview.2` made the same day.
+
+### Wire formats
+
+Unchanged from `0.9.0-preview.1`: see its table below. The shared validator gains `STRATA_ERR_NO_TERMINAL`, with fixtures in `schema/fixtures/graph-validation/`; graph definitions keep their `schema_version`.
 
 ## 0.9.0-preview.2 (2026-11-10)
 
