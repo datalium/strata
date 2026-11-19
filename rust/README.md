@@ -7,7 +7,7 @@ A type-safe, compiled framework for orchestrating AI agents as state graphs, for
 ## Install
 
 ```bash
-cargo add datalium-strata@0.9.0-preview.2 datalium-strata-memory@0.9.0-preview.2
+cargo add datalium-strata@0.9.0-preview.3 datalium-strata-memory@0.9.0-preview.3
 ```
 
 A preview version is only picked when you name it.
