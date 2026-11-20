@@ -1,0 +1,57 @@
+{
+  "description": "The cross-engine migration test (design/Arch-Specs/STRATA-SPEC-005.md, 'Conformance'): one engine writes two SQL databases, SQLite and Postgres, and the other opens them with its current stores, reads every checkpoint and resumes threads to the end. The writer names its databases with its own engine name ('rust' or 'dotnet'); the reader opens the other engine's. 'older' is a database at the checkpoints component's schema version 1, as a build from before value offload left it: the writer saves every checkpoint-lifecycle fixture (one per engine-visible version, 1.0.0 to 1.7.0) as thread 'lifecycle-<file name without .json>', then takes the database back to version 1 (drops checkpoint_blobs, records 1), which is exactly the layout version 1 was. The reader's store migrates it to the current version when it opens it; each checkpoint then loads as its fixture (with the thread id the writer gave it), every thread is listed, and the threads in 'resumes' finish as they say. 'current' is a database at the current version, written by a store with deltas and offload on: graph A -> B -> C -> D, which checkpoints every node, runs with 'trail' empty and 'evidence' 'e' repeated evidence_bytes times, and the writer's process dies when C starts, so the thread's rows are the ones in 'written', and its latest is running B>C. The reader recovers it with the same graph on its own store (deltas and offload on too): C runs again as a recovery, under the key the writer's hop count gives it, then D, and the run completes. The CLI then reads the other engine's databases (cli/tests/cross_engine.rs). Without STRATA_INTEROP_DIR each engine writes into a directory of its own and reads what it wrote, so the test runs in every build; .github/workflows/cross-engine-ci.yml runs it across the engines.",
+  "databases": {
+    "sqlite_file": "{engine}-{database}.sqlite",
+    "postgres_schema": "strata_interop_{engine}_{database}"
+  },
+  "older": {
+    "written_checkpoints_version": 1,
+    "fixtures": "checkpoint-lifecycle",
+    "thread_prefix": "lifecycle-",
+    "resumes": [
+      {
+        "thread_id": "lifecycle-frozen",
+        "version": "1.0.0",
+        "graph": "PrepareWireTransfer (a boundary) -> ExecuteWireTransfer, which sets is_completed, checkpointing every node; no identity",
+        "signal": { "approve": "alice", "overrides": { "approved_by": "alice" } },
+        "state": { "invoice_generated": true, "amount": 4200.5, "currency": "USD", "approved_by": "alice", "is_completed": true }
+      },
+      {
+        "thread_id": "lifecycle-identified",
+        "version": "1.6.0",
+        "graph": "the same, identified as wire-transfer version 2",
+        "signal": { "approve": "alice", "overrides": { "approved_by": "alice" } },
+        "state": { "invoice_generated": true, "amount": 4200.5, "currency": "USD", "approved_by": "alice", "is_completed": true }
+      },
+      {
+        "thread_id": "lifecycle-running",
+        "version": "1.7.0",
+        "graph": "A -> B -> C, each adding its name to trail, checkpointing every node; recovered",
+        "recovered": { "node": "B", "key": "lifecycle-running/B#2" },
+        "state": { "trail": "ABC", "approved": false, "limit": 0 }
+      },
+      {
+        "thread_id": "lifecycle-claimed",
+        "version": "1.7.0",
+        "graph": "A (a boundary, rejected to Rejected) -> B -> C, as above; recovered with the claim's decision",
+        "recovered": { "node": "B", "key": "lifecycle-claimed/B#2", "reviewer": "alice" },
+        "state": { "trail": "ABC", "approved": false, "limit": 5 }
+      }
+    ]
+  },
+  "current": {
+    "thread_id": "interop-current",
+    "nodes": ["A", "B", "C", "D"],
+    "dies_at": "C",
+    "evidence_bytes": 2048,
+    "offload_threshold": 1024,
+    "written": [
+      { "schema_version": "1.9.0", "status": "running", "next_node": "A", "trail": "" },
+      { "schema_version": "1.8.0", "status": "running", "next_node": "B", "trail": "A" },
+      { "schema_version": "1.8.0", "status": "running", "next_node": "C", "trail": "AB" }
+    ],
+    "recovered": { "node": "C", "key": "interop-current/C#3" },
+    "visits": ["C", "D"],
+    "state": { "trail": "ABCD" }
+  }
+}

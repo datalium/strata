@@ -6,6 +6,8 @@
 #
 # Leaves the packages in dotnet/artifacts/packages, which is what a release pushes.
 set -euo pipefail
+# grep reads here-strings, not pipes: `grep -q` exits at its first match, and with pipefail the writer's broken
+# pipe would fail a check that passed.
 
 root=$(cd "$(dirname "$0")/../.." && pwd)
 packages="$root/dotnet/artifacts/packages"
@@ -29,20 +31,20 @@ for id in $expected; do
     [ -f "$packages/$id.$version.snupkg" ] || fail "$id has no symbol package"
     contents=$(unzip -Z1 "$package")
     for file in "$id.nuspec" README.md "lib/net10.0/$id.dll" "lib/net10.0/$id.xml"; do
-        echo "$contents" | grep -qx "$file" || fail "$id has no $file"
+        grep -qx "$file" <<<"$contents" || fail "$id has no $file"
     done
     nuspec=$(unzip -p "$package" "$id.nuspec")
-    echo "$nuspec" | grep -q '<license type="expression">Apache-2.0</license>' || fail "$id doesn't state its licence"
-    echo "$nuspec" | grep -q "<version>$version</version>" || fail "$id is not at $version"
-    echo "$nuspec" | grep -q '<description>Package Description</description>' && fail "$id has no description"
+    grep -q '<license type="expression">Apache-2.0</license>' <<<"$nuspec" || fail "$id doesn't state its licence"
+    grep -q "<version>$version</version>" <<<"$nuspec" || fail "$id is not at $version"
+    grep -q '<description>Package Description</description>' <<<"$nuspec" && fail "$id has no description"
     if [ "$id" != "Datalium.Strata" ]; then
         # The engine at the same version, with its analyzers let through to this package's consumers.
-        dependency=$(echo "$nuspec" | grep '<dependency id="Datalium.Strata" ') || fail "$id doesn't depend on Datalium.Strata"
-        echo "$dependency" | grep -q "version=\"$version\"" || fail "$id depends on another version of Datalium.Strata"
-        echo "$dependency" | grep -qi 'analyzers' && fail "$id hides Datalium.Strata's source generator from its consumers"
+        dependency=$(grep '<dependency id="Datalium.Strata" ' <<<"$nuspec") || fail "$id doesn't depend on Datalium.Strata"
+        grep -q "version=\"$version\"" <<<"$dependency" || fail "$id depends on another version of Datalium.Strata"
+        grep -qi 'analyzers' <<<"$dependency" && fail "$id hides Datalium.Strata's source generator from its consumers"
     fi
 done
-unzip -Z1 "$packages/Datalium.Strata.$version.nupkg" | grep -qx 'analyzers/dotnet/cs/Datalium.Strata.SourceGenerators.dll' \
+grep -qx 'analyzers/dotnet/cs/Datalium.Strata.SourceGenerators.dll' <<<"$(unzip -Z1 "$packages/Datalium.Strata.$version.nupkg")" \
     || fail "Datalium.Strata doesn't contain the source generator"
 
 dotnet run --project "$smoke" --configuration Release

@@ -38,3 +38,6 @@ BenchmarkDotNet.Artifacts/
 
 # The benchmark profile's --out files (benchmarks/README.md)
 *-profile.json
+
+# The cross-engine test's shared directory, when run locally (CLAUDE.md)
+/cross-engine/

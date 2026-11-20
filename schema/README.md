@@ -2,8 +2,14 @@
 
 Canonical source of truth for the wire formats `CLAUDE.md`'s cross-language
 constraint requires: the Rust `strata` CLI/runtime and the C# runtime must be
-able to read each other's checkpoints, graph definitions, and history
-records.
+able to read each other's checkpoints, graph definitions, history records and
+memory records.
+
+**[STRATA-SPEC-005](../design/Arch-Specs/STRATA-SPEC-005.md) makes these
+formats normative:** the versioning rules, which encodings a store must
+accept, the database schema versions, the upgrade order, the stability
+promise for `0.9.0`, and what proves an implementation conforms. This file
+is the reference it relies on.
 
 ## Wire format
 
@@ -299,6 +305,15 @@ their edges however they like.
   schema version 2 (see "Offloaded values"), in SQLite and in Postgres. Read
   by both runtimes' offload tests, after migrating a version-1 database, and
   the CLI's layout test.
+- `schema/fixtures/cross-engine/scenario.json` (STRATA-SPEC-005,
+  "Conformance") — not a record: the cross-engine migration test. One engine
+  writes a SQLite file and a Postgres schema at the `checkpoints` component's
+  version 1, holding every `checkpoint-lifecycle` fixture, and another at the
+  current version from a store with deltas and offload, holding a run that
+  died mid-way; the other engine's current stores migrate, read and resume
+  them, and the CLI reads what .NET wrote. `rust/strata-memory/tests/cross_engine.rs`,
+  `Backends/CrossEngineTests.cs` and `cli/tests/cross_engine.rs`, run across
+  the engines by `.github/workflows/cross-engine-ci.yml`.
 - `schema/fixtures/cloud/` (`design/30-Strata-Cloud-Store.md`) — Strata Cloud's
   SDK wire, one recorded exchange per file: the `operation` (`save`, `load` or
   `decisions`; since SG-36, `design/43-Cloud-Leases-And-Listing.md`, also
@@ -656,8 +671,10 @@ CREATE TABLE IF NOT EXISTS strata_schema_version ( CREATE TABLE IF NOT EXISTS st
 ```
 
 - **One row per component:** `checkpoints` (the log, its head table and the
-  leases) and `history` (the history log). No row means version 0: a database
-  from before the table, or an empty one.
+  leases), `history` (the history log) and `memory` (a long-term memory
+  store's table, `design/45-Long-Term-Memory.md`, created at version 1; in
+  Redis, the `version` in `{prefix}:memory:schema`). No row means version 0: a
+  database from before the table, or an empty one.
 - **Version 1 is the layout described in this file before value offload.** A
   store that finds a component at 0 runs its baseline, which creates the
   tables or adds whatever an older layout lacks (every "added when an older log
@@ -945,13 +962,16 @@ removes it afterwards, so tests are independent and re-runnable.
 | `checkpoint.schema.json` | Freeze/Flush/Evict persisted state (STRATA-SPEC-002) | `rust/strata-core/src/schema.rs` | `dotnet/src/Datalium.Strata.Storage/Schema/Checkpoint.cs` |
 | `graph-definition.schema.json` | Compiled graph topology (STRATA-SPEC-004) | `rust/strata-core/src/schema.rs` | `dotnet/src/Datalium.Strata.Storage/Schema/GraphDefinition.cs` |
 | `history-record.schema.json` | Persisted `ChatMessage` (design/03-Architecture.md) | `rust/strata-memory/src/schema.rs` | `dotnet/src/Datalium.Strata.Storage/Schema/HistoryRecord.cs` |
+| `memory-record.schema.json` | A long-term memory entry (design/45-Long-Term-Memory.md) | `rust/strata-core/src/memory.rs` | `dotnet/src/Datalium.Strata/Memory/MemoryRecord.cs` |
 
-All three C# types live in `Datalium.Strata.Storage` per the persistence
+The first three C# types live in `Datalium.Strata.Storage` per the persistence
 layer split in `design/06-Project-Structure.md`, regardless of which crate
 owns the equivalent Rust type — the Rust side splits `checkpoint` /
 `graph-definition` into `strata-core` (graph engine concerns) and
 `history-record` into `strata-memory` (persistence concerns), matching
-`STRATA-SPEC-004` and `design/03-Architecture.md` respectively.
+`STRATA-SPEC-004` and `design/03-Architecture.md` respectively. The memory
+record is the engine's in both (`strata-core`, `Datalium.Strata`), since the
+memory port is the engine's and its stores are in the storage packages.
 
 `frozen_state` in a checkpoint is intentionally untyped (`object` /
 `serde_json::Value` / `JsonElement`) — it's the user-defined graph state
@@ -960,11 +980,12 @@ compiled (Phase 2).
 
 ## Versioning
 
-Every record carries a `schema_version` field (currently `"1.0.0"`,
-`const`-pinned in each schema). A breaking change to a record's shape bumps
-this value, adds a new fixture, and both language test suites must handle
-the version bump explicitly rather than silently accepting old and new
-shapes interchangeably.
+Every record carries a `schema_version` field, an `enum` (or a `const`) in
+each schema: checkpoint `"1.0.0"` to `"1.9.0"`, graph definition `"1.0.0"` to
+`"1.6.0"`, history record and memory record `"1.0.0"`. A change to a record's
+shape adds a version, adds a new fixture, and both language test suites must
+handle the new version explicitly rather than silently accepting old and new
+shapes interchangeably (STRATA-SPEC-005, "Versioning Rules").
 
 `graph-definition` has seven versions, by the same rule, each a superset of
 the one before: `"1.6.0"` for a level with an interrupt boundary, a node with
@@ -1087,3 +1108,7 @@ schema version: a graph identity, a wait, `EveryNode`, deltas, offload.
    `rust/strata-memory`, `dotnet test` in `Datalium.Strata.Tests`) must pass
    before merging — that's what actually proves the interop constraint
    holds, not just that the schema doc looks right.
+5. If the change alters what a store leaves in a database (a new checkpoint
+   version, a database step, a store encoding), add it to the cross-engine
+   scenario (`fixtures/cross-engine/scenario.json`) and both twin tests, so
+   `cross-engine-ci.yml` proves one engine reads what the other wrote.
