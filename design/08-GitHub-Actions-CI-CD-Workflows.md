@@ -171,3 +171,7 @@ jobs:
             - name: Push Packages to NuGet.org
               run: dotnet nuget push nuget-packages/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://nuget.org
 ```
+
+### 🔀 3. Cross-Engine Pipeline (`.github/workflows/cross-engine-ci.yml`)
+
+Added 2026-11-20 with STRATA-SPEC-005 ("Conformance"). One job with both toolchains and a Postgres service runs the cross-engine migration test (`schema/fixtures/cross-engine/scenario.json`) in five steps against one directory of SQLite files and one Postgres server. Rust writes its databases, .NET writes its own, Rust reads, migrates and resumes .NET's, .NET does the same with Rust's, and the CLI reads .NET's. `STRATA_INTEROP_DIR` and `STRATA_INTEROP_STEP` (`write` or `read`) tell each step what to do. The workflow file is the reference for its steps. It runs on the same triggers as the other two and publishes nothing.

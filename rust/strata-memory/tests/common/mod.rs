@@ -88,7 +88,7 @@ pub struct PgSandbox {
 
 /// Runs `work` on a thread of its own, so the sync `postgres` client never runs
 /// inside a tokio runtime (where it panics).
-fn off_runtime<R: Send>(work: impl FnOnce() -> R + Send) -> R {
+pub fn off_runtime<R: Send>(work: impl FnOnce() -> R + Send) -> R {
     std::thread::scope(|scope| scope.spawn(work).join().unwrap())
 }
 

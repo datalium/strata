@@ -69,6 +69,14 @@ dotnet test dotnet/Datalium.Strata.sln --configuration Release --no-build
 
 Both workflows (`.github/workflows/rust-ci.yml`, `dotnet-ci.yml`) run on pull requests to `main`, on pushes to `main` and `v*` tags, and on `workflow_dispatch`. Every run checks the version and packs. A `v*` tag also publishes.
 
+**Cross-engine** (`design/Arch-Specs/STRATA-SPEC-005.md`, "Conformance"): `.github/workflows/cross-engine-ci.yml` runs on the same triggers. Each engine writes databases for the other to migrate, read and resume, then the CLI reads them. Locally, with `docker compose up -d --wait`:
+```bash
+export STRATA_INTEROP_DIR=$PWD/cross-engine STRATA_TEST_POSTGRES_URL=postgres://strata:strata@localhost:5432/strata
+STRATA_INTEROP_STEP=write sh -c '(cd rust && cargo test -p datalium-strata-memory --test cross_engine) && dotnet test dotnet/tests/Datalium.Strata.Tests --filter "FullyQualifiedName~CrossEngineTests"'
+STRATA_INTEROP_STEP=read  sh -c '(cd rust && cargo test -p datalium-strata-memory --test cross_engine) && dotnet test dotnet/tests/Datalium.Strata.Tests --filter "FullyQualifiedName~CrossEngineTests" && (cd cli && cargo test --test cross_engine)'
+```
+Without `STRATA_INTEROP_DIR`, each engine's test reads only what it wrote, as part of its ordinary test run.
+
 **Benchmarks** (`design/37-Benchmarks.md`, `benchmarks/README.md`)
 ```bash
 (cd rust && cargo bench -p strata-bench)                                                       # Rust microbenchmarks
