@@ -35,3 +35,6 @@ Thumbs.db
 
 # BenchmarkDotNet
 BenchmarkDotNet.Artifacts/
+
+# The benchmark profile's --out files (benchmarks/README.md)
+*-profile.json
