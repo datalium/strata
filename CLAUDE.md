@@ -35,14 +35,14 @@ strata/
 ├── schema/                 # Shared JSON Schemas and fixtures that pin the cross-language wire format
 ├── benchmarks/             # README.md (how to run) and RESULTS.md (the last full run)
 ├── design/                 # Design docs, one per feature
-├── examples/               # dotnet-agent (+ tests), rust-agent
+├── examples/               # dotnet-agent (+ tests), rust-agent, docs-snippets (the stratamesh.dev code samples)
 ├── .github/scripts/        # versions.sh (the one version, checked), pack-smoke.sh (pack and prove the NuGet packages)
 └── CHANGELOG.md            # One entry per version, with the wire formats it writes and reads
 ```
 
 ## Build & Test Commands
 
-These match CI. The Rust commands run separately in `rust/`, `cli/` and `examples/rust-agent/` (three independent Cargo projects).
+These match CI. The Rust commands run separately in `rust/`, `cli/`, `examples/rust-agent/` and `examples/docs-snippets/rust/` (four independent Cargo projects).
 
 **Rust / CLI**
 ```bash
@@ -92,3 +92,4 @@ dotnet run -c Release --project dotnet/benchmarks/Datalium.Strata.Benchmarks -- 
 - **One wire format.** Checkpoints, graph definitions, history records and memory records follow the JSON Schemas in `schema/`, so either engine and the CLI can read what the other wrote. The shared fixtures in `schema/fixtures/` are tested by both engines. Wire formats only grow: a new field gets a new minor `schema_version`, and old versions stay readable (`schema/README.md`, "Compatibility").
 - **One version** for every package, crate and the CLI. `versions.sh` checks it.
 - **Update the docs with the code.** A behaviour change updates its `design/` doc (including its Implementation Status) and adds a `CHANGELOG.md` entry, with the wire formats if they changed.
+- **The stratamesh.dev samples are tests.** `examples/docs-snippets/` holds every code sample on the docs site, as regions inside tests (its `README.md`). An API change that breaks one fixes it in the same PR.

@@ -1,0 +1,57 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The C# code samples on stratamesh.dev (strata-management ADR-0001, rule 2). Each sample is a region in a
+       test, so CI compiles it and runs it. examples/docs-snippets/README.md describes the region markers. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.2" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5" />
+    <!-- FakeTimeProvider, for the timer, retry, health and lease samples. -->
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.11.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The hosting samples: the generic host and a minimal API. The ASP.NET Core framework brings
+         Microsoft.Extensions.Hosting with it. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <!-- The OpenTelemetry samples on /guides/production/. -->
+    <PackageReference Include="OpenTelemetry.Exporter.Console" Version="1.21.0" />
+    <PackageReference Include="OpenTelemetry.Exporter.InMemory" Version="1.21.0" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.21.0" />
+    <!-- Model clients and embedding generators, built but never called: the samples run on scripted models. -->
+    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.11.0" />
+    <!-- sqlite-vec for the SQLite memory store, which the storage package doesn't bring. -->
+    <!-- docs:begin guides/ai/long-term-memory/sqlite-vec -->
+    <PackageReference Include="sqlite-vec" Version="0.1.7-alpha.2.1" ExcludeAssets="contentFiles" />
+    <!-- docs:end guides/ai/long-term-memory/sqlite-vec -->
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Whole-file samples (README.md): the tests load them from files/ next to the test assembly. -->
+    <None Include="..\files\**\*" LinkBase="files" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The hosting package brings the engine and the stores with it, as Datalium.Strata.Hosting's NuGet package does. -->
+    <ProjectReference Include="..\..\..\dotnet\src\Datalium.Strata.Hosting\Datalium.Strata.Hosting.csproj" />
+    <ProjectReference Include="..\..\..\dotnet\src\Datalium.Strata.AI\Datalium.Strata.AI.csproj" />
+    <ProjectReference Include="..\..\..\dotnet\src\Datalium.Strata.Cloud\Datalium.Strata.Cloud.csproj" />
+    <!-- [StrataTool] methods need the generator wired in directly: analyzer references aren't transitive through an
+         ordinary ProjectReference. -->
+    <ProjectReference Include="..\..\..\dotnet\src\Datalium.Strata.SourceGenerators\Datalium.Strata.SourceGenerators.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+</Project>

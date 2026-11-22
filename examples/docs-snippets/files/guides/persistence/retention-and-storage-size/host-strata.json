@@ -1,0 +1,8 @@
+{
+  "sqlite": {
+    "path": "strata.db",
+    "deltas": { "enabled": true },
+    "offload": { "enabled": true, "path": "blobs" }
+  },
+  "retention": { "interval": "1h", "older_than": "30d" }
+}

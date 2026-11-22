@@ -1,0 +1,6 @@
+{
+  "sqlite": {
+    "path": "strata.db",
+    "group_commit": { "enabled": true }
+  }
+}

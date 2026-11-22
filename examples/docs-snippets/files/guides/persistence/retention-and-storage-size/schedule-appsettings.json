@@ -1,0 +1,6 @@
+{
+  "Strata": {
+    "Sqlite": { "Path": "strata.db" },
+    "Retention": { "Interval": "01:00:00", "OlderThan": "30.00:00:00" }
+  }
+}

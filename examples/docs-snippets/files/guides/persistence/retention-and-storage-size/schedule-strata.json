@@ -1,0 +1,4 @@
+{
+  "sqlite": { "path": "strata.db" },
+  "retention": { "interval": "1h", "older_than": "30d" }
+}

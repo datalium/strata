@@ -1,0 +1,10 @@
+{
+  "Strata": {
+    "Sqlite": {
+      "Path": "strata.db",
+      "Deltas": { "Enabled": true },
+      "Offload": { "Enabled": true, "Path": "blobs" }
+    },
+    "Retention": { "Interval": "01:00:00", "OlderThan": "30.00:00:00" }
+  }
+}

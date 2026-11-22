@@ -1,0 +1,8 @@
+{
+  "postgres": {
+    "url": "postgres://strata:strata@localhost:5432/strata",
+    "pool_size": 16,
+    "retry": { "max_attempts": 6 },
+    "group_commit": { "enabled": true }
+  }
+}

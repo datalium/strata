@@ -1,0 +1,66 @@
+{
+  "sqlite": {
+    "path": "strata.db",
+    "group_commit": { "enabled": true, "max_batch": 256 },
+    "deltas": { "enabled": true, "full_every": 16, "cached_threads": 10000 },
+    "offload": { "enabled": true, "threshold": 65536, "path": "blobs" }
+  },
+  "postgres": {
+    "url": "postgres://strata:strata@localhost:5432/strata",
+    "auto_migrate": false,
+    "pool_size": 16,
+    "retry": { "max_attempts": 4, "initial_delay": "50ms", "max_delay": "2s" },
+    "group_commit": { "enabled": true, "max_batch": 256, "max_concurrent_flushes": 4 },
+    "deltas": { "enabled": true },
+    "offload": { "enabled": true, "threshold": 65536 }
+  },
+  "redis": {
+    "url": "redis://localhost:6379",
+    "prefix": "orders",
+    "finished_thread_ttl": "7d",
+    "retry": { "max_attempts": 4 },
+    "deltas": { "enabled": false },
+    "offload": { "enabled": false }
+  },
+  "runs": {
+    "lease": { "owner": "orders-1", "ttl": "30s" }
+  },
+  "scheduler": {
+    "max_concurrent": 16,
+    "max_queued": 1024,
+    "max_queue_time": "10s",
+    "reservations": [ { "min_priority": 5, "slots": 2 } ],
+    "tenant_key": "tenant",
+    "tenant_limit": 4,
+    "tenant_limits": { "acme": 8 }
+  },
+  "wake": {
+    "interval": "5s",
+    "batch_size": 100,
+    "metadata": { "app": "orders" },
+    "match_graph": true
+  },
+  "recovery": {
+    "interval": "30s",
+    "batch_size": 100,
+    "stale_after": "5m",
+    "max_recoveries": 3,
+    "priority": 10
+  },
+  "retention": {
+    "interval": "1h",
+    "batch_size": 1000,
+    "older_than": "30d",
+    "states": [ "completed", "ended", "failed" ]
+  },
+  "memory": {
+    "dimensions": 1536,
+    "index": { "kind": "hnsw", "m": 16, "ef_construction": 64 },
+    "retention": {
+      "interval": "1h",
+      "batch_size": 1000,
+      "older_than": "365d",
+      "namespace": "incidents"
+    }
+  }
+}
