@@ -1,0 +1,7 @@
+/target
+# Files the samples write in the crate folder, where cargo test runs them. The tests delete them too.
+/checkpoints.db*
+/memory.db*
+/strata.db*
+/reports.sqlite*
+/blobs/

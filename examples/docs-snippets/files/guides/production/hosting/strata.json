@@ -1,0 +1,7 @@
+{
+  "sqlite": { "path": "strata.db" },
+  "runs": { "lease": { "ttl": "30s" } },
+  "wake": { "interval": "5s" },
+  "recovery": { "interval": "30s" },
+  "retention": { "interval": "1h", "older_than": "30d" }
+}

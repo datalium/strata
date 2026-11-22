@@ -74,6 +74,10 @@ jobs:
               working-directory: examples/rust-agent
               run: cargo fmt --all -- --check
 
+            - name: Check Formatting (examples/docs-snippets)
+              working-directory: examples/docs-snippets/rust
+              run: cargo fmt --all -- --check
+
             - name: Run Clippy Lints (rust workspace)
               working-directory: rust
               run: cargo clippy --all-targets --all-features -- -D warnings
@@ -86,6 +90,10 @@ jobs:
               working-directory: examples/rust-agent
               run: cargo clippy --all-targets --all-features -- -D warnings
 
+            - name: Run Clippy Lints (examples/docs-snippets)
+              working-directory: examples/docs-snippets/rust
+              run: cargo clippy --all-targets --all-features -- -D warnings
+
             - name: Run Engine Tests (rust workspace)
               working-directory: rust
               run: cargo test --all-features
@@ -96,6 +104,11 @@ jobs:
 
             - name: Run Example Agent (rust-agent)
               working-directory: examples/rust-agent
+              run: cargo test
+
+            # strata-management ADR-0001 rule 2: every Rust sample on stratamesh.dev is a region in one of these tests.
+            - name: Run Docs Samples (examples/docs-snippets)
+              working-directory: examples/docs-snippets/rust
               run: cargo test
 
             # design/37-Benchmarks.md: every benchmark runs once, with small counts, so one that no longer
