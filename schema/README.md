@@ -357,6 +357,18 @@ their edges however they like.
   the model. Both engines replay every case
   (`rust/strata-core/tests/argument_problems.rs`,
   `Tools/ToolArgumentProblemTests.cs`).
+- `schema/fixtures/mcp/` (`design/50-MCP-Client.md`) — not wire formats:
+  Strata's MCP client, pinned across the engines. `tool-results.json`: an MCP
+  `CallToolResult` and the text the Strata tool returns (`structuredContent`,
+  text blocks, placeholders for binary content, the `{"error": …}` wrapper
+  for `isError`). `header-values.json`: a value and its `Mcp-Name` /
+  `Mcp-Param-*` header encoding, with the Base64 sentinel.
+  `x-mcp-header.json`: a tool's `inputSchema`, whether its `x-mcp-header`
+  annotations are valid (and why not), and the headers a call sends.
+  `sse.json`: a `text/event-stream` body and its events. `era-detection.json`:
+  the answer to the `server/discover` probe, per transport, and the era,
+  version or failure it means. Both engines replay every case
+  (`rust/strata-mcp/src/*.rs` unit tests, `Mcp/Mcp*Tests.cs`).
 - `schema/fixtures/ai/agent-cases.json` (`design/44-LLM-Integration.md`) —
   not a wire format: the agent's loop, as a scripted model's turns (text, tool
   calls, faults), a registry (tools that answer, fail, are left out of the

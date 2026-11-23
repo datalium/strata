@@ -15,12 +15,20 @@ namespace Datalium.Strata.Hosting;
 /// </summary>
 public static class StrataInstrumentation
 {
-    /// <summary>The sources of Strata's spans: the engine's (run, node, attempt, branch, tool) and the Cloud client's.</summary>
-    public static IReadOnlyList<string> ActivitySourceNames { get; } = [StrataTelemetry.Name, StrataCloudTelemetry.Name];
+    /// <summary>
+    /// The name of the MCP client's source and meter (<c>Datalium.Strata.Mcp</c>, design/50-MCP-Client.md), as a string,
+    /// so this package doesn't reference that one. A source nobody created is harmless.
+    /// </summary>
+    private const string McpName = "Datalium.Strata.Mcp";
 
-    /// <summary>The meters of Strata's metrics: the engine's, the stores', the Cloud client's and the drivers'.</summary>
+    /// <summary>The sources of Strata's spans: the engine's (run, node, attempt, branch, tool), the Cloud client's and
+    /// the MCP client's.</summary>
+    public static IReadOnlyList<string> ActivitySourceNames { get; } = [StrataTelemetry.Name, StrataCloudTelemetry.Name, McpName];
+
+    /// <summary>The meters of Strata's metrics: the engine's, the stores', the Cloud client's, the drivers' and the MCP
+    /// client's.</summary>
     public static IReadOnlyList<string> MeterNames { get; } =
-        [StrataTelemetry.Name, StorageTelemetry.Name, StrataCloudTelemetry.Name, StrataHostingTelemetry.Name];
+        [StrataTelemetry.Name, StorageTelemetry.Name, StrataCloudTelemetry.Name, StrataHostingTelemetry.Name, McpName];
 }
 
 /// <summary>Health checks and instrumentation (<c>design/35-Hosting-Integration.md</c>).</summary>

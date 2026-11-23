@@ -459,6 +459,8 @@ Recommendations are in bold.
 
 ## Implementation Status
 
+> **Amended 2026-11-22 (`design/50-MCP-Client.md`):** Rust's `StrataTool::name()` returns `&str`, not `&'static str`, so a tool whose name is known only at run time (an MCP server's) fits without leaking it. The registry keys its index and its excluded names on `Arc<str>`, and `names()` yields `&str`. `#[strata_tool]` and every existing tool compile unchanged. .NET's names were always strings.
+
 Built 2026-10-02 in both engines, in one change, as specified above. These are the differences and details.
 
 **Where it diverged, and why:**

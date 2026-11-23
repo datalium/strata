@@ -18,6 +18,7 @@ cargo add datalium-strata@0.9.0 datalium-strata-memory@0.9.0
 | `datalium-strata-cloud` | The Strata Cloud checkpoint store, decisions client and decision worker. |
 | `datalium-strata-host` | Driver loops, settings and a store health probe for running Strata in a service. |
 | `datalium-strata-ai` | Model calls from a node: a `ChatClient` trait with OpenAI-compatible and Anthropic clients, streamed into the run, observed as run events and GenAI telemetry, provider faults retried with their `Retry-After`; the model node; `Agent`, the model ↔ tool loop with typed answers; model routes; embeddings and the long-term memory helper. |
+| `datalium-strata-mcp` | Strata's own MCP client: an MCP server's tools, over stdio or Streamable HTTP, registered as Strata tools. |
 
 The crates share one version and are released together.
 

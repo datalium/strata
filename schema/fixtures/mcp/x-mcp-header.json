@@ -1,0 +1,499 @@
+{
+  "description": "Which tools a client keeps on modern Streamable HTTP, given their `x-mcp-header` annotations, and the `Mcp-Param-*` headers a call sends (MCP 2026-07-28, \"Custom Headers from Tool Parameters\"; design/50-MCP-Client.md), replayed by both engines' header tests. Each case gives a tool's `inputSchema`. `rejected` is null when the tool is kept, else the reason the engines give. A schema is walked as JSON Schema: `properties`, `$defs`, `definitions`, `patternProperties` and `dependentSchemas` hold schemas by name; `const`, `enum`, `default` and `examples` hold values and aren't walked; any other object, or object in an array, is a schema. An annotation is valid when it is on a schema reached from the root through `properties` only, it is a non-empty string of HTTP token characters (RFC 9110 `tchar`), its property's `type` is `\"string\"`, `\"integer\"` or `\"boolean\"`, and no other annotation in the schema has the same name ignoring ASCII case. The reasons: `x-mcp-header on '<path>' isn't a valid header name`; `x-mcp-header on '<path>' is on a <type> property: only string, integer and boolean can be headers`, where `<type>` is the `type` as compact JSON, or `untyped` when absent; `x-mcp-header '<name>' is used twice`, with the second one's name; and `an x-mcp-header isn't reachable from the schema root through properties only`. `<path>` is the property names from the root, joined with `.`. Each case has one problem at most, so the order the checks run in doesn't matter. `calls` give arguments and the `Mcp-Param-*` headers sent: the value at each annotated path, encoded as header-values.json says, and no header when the value is absent or gives none.",
+  "cases": [
+    {
+      "name": "the spec's example",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "region": {
+            "type": "string",
+            "description": "The region",
+            "x-mcp-header": "Region"
+          },
+          "query": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "region",
+          "query"
+        ]
+      },
+      "rejected": null,
+      "calls": [
+        {
+          "arguments": {
+            "region": "us-west1",
+            "query": "SELECT 1"
+          },
+          "headers": {
+            "Mcp-Param-Region": "us-west1"
+          }
+        },
+        {
+          "arguments": {
+            "query": "SELECT 1"
+          },
+          "headers": {}
+        },
+        {
+          "arguments": {
+            "region": "東京",
+            "query": "x"
+          },
+          "headers": {
+            "Mcp-Param-Region": "=?base64?5p2x5Lqs?="
+          }
+        }
+      ]
+    },
+    {
+      "name": "no annotations",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "a": {
+            "type": "string"
+          }
+        }
+      },
+      "rejected": null,
+      "calls": [
+        {
+          "arguments": {
+            "a": "x"
+          },
+          "headers": {}
+        }
+      ]
+    },
+    {
+      "name": "integer and boolean",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "x-mcp-header": "Limit"
+          },
+          "dry_run": {
+            "type": "boolean",
+            "x-mcp-header": "Dry-Run"
+          }
+        }
+      },
+      "rejected": null,
+      "calls": [
+        {
+          "arguments": {
+            "limit": 42,
+            "dry_run": true
+          },
+          "headers": {
+            "Mcp-Param-Limit": "42",
+            "Mcp-Param-Dry-Run": "true"
+          }
+        },
+        {
+          "arguments": {
+            "limit": null,
+            "dry_run": "yes"
+          },
+          "headers": {
+            "Mcp-Param-Dry-Run": "yes"
+          }
+        },
+        {
+          "arguments": {
+            "limit": 2.5
+          },
+          "headers": {}
+        }
+      ]
+    },
+    {
+      "name": "a nested property",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "object",
+            "properties": {
+              "tenant": {
+                "type": "string",
+                "x-mcp-header": "Tenant"
+              }
+            }
+          }
+        }
+      },
+      "rejected": null,
+      "calls": [
+        {
+          "arguments": {
+            "target": {
+              "tenant": "acme"
+            }
+          },
+          "headers": {
+            "Mcp-Param-Tenant": "acme"
+          }
+        },
+        {
+          "arguments": {
+            "target": "acme"
+          },
+          "headers": {}
+        }
+      ]
+    },
+    {
+      "name": "a property called x-mcp-header is just a property",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "x-mcp-header": {
+            "type": "string"
+          }
+        }
+      },
+      "rejected": null,
+      "calls": [
+        {
+          "arguments": {
+            "x-mcp-header": "v"
+          },
+          "headers": {}
+        }
+      ]
+    },
+    {
+      "name": "values aren't walked",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "a": {
+            "type": "object",
+            "default": {
+              "x-mcp-header": "Nope"
+            },
+            "examples": [
+              {
+                "x-mcp-header": "Nope"
+              }
+            ],
+            "const": {
+              "x-mcp-header": "Nope"
+            },
+            "enum": [
+              {
+                "x-mcp-header": "Nope"
+              }
+            ]
+          }
+        }
+      },
+      "rejected": null,
+      "calls": []
+    },
+    {
+      "name": "token punctuation is allowed",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "a": {
+            "type": "string",
+            "x-mcp-header": "X_a.b~c!#$%&'*+^`|"
+          }
+        }
+      },
+      "rejected": null,
+      "calls": [
+        {
+          "arguments": {
+            "a": "v"
+          },
+          "headers": {
+            "Mcp-Param-X_a.b~c!#$%&'*+^`|": "v"
+          }
+        }
+      ]
+    },
+    {
+      "name": "an empty name",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "region": {
+            "type": "string",
+            "x-mcp-header": ""
+          }
+        }
+      },
+      "rejected": "x-mcp-header on 'region' isn't a valid header name"
+    },
+    {
+      "name": "a space in the name",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "region": {
+            "type": "string",
+            "x-mcp-header": "My Region"
+          }
+        }
+      },
+      "rejected": "x-mcp-header on 'region' isn't a valid header name"
+    },
+    {
+      "name": "a colon in the name",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "region": {
+            "type": "string",
+            "x-mcp-header": "Region:"
+          }
+        }
+      },
+      "rejected": "x-mcp-header on 'region' isn't a valid header name"
+    },
+    {
+      "name": "a newline in the name",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "region": {
+            "type": "string",
+            "x-mcp-header": "Re\ngion"
+          }
+        }
+      },
+      "rejected": "x-mcp-header on 'region' isn't a valid header name"
+    },
+    {
+      "name": "non-ASCII in the name",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "region": {
+            "type": "string",
+            "x-mcp-header": "Région"
+          }
+        }
+      },
+      "rejected": "x-mcp-header on 'region' isn't a valid header name"
+    },
+    {
+      "name": "a name that isn't a string",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "region": {
+            "type": "string",
+            "x-mcp-header": 7
+          }
+        }
+      },
+      "rejected": "x-mcp-header on 'region' isn't a valid header name"
+    },
+    {
+      "name": "a number property",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "price": {
+            "type": "number",
+            "x-mcp-header": "Price"
+          }
+        }
+      },
+      "rejected": "x-mcp-header on 'price' is on a \"number\" property: only string, integer and boolean can be headers"
+    },
+    {
+      "name": "an object property",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "object",
+            "x-mcp-header": "Target"
+          }
+        }
+      },
+      "rejected": "x-mcp-header on 'target' is on a \"object\" property: only string, integer and boolean can be headers"
+    },
+    {
+      "name": "an untyped property",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "v": {
+            "x-mcp-header": "V"
+          }
+        }
+      },
+      "rejected": "x-mcp-header on 'v' is on a untyped property: only string, integer and boolean can be headers"
+    },
+    {
+      "name": "a type list",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "v": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-mcp-header": "V"
+          }
+        }
+      },
+      "rejected": "x-mcp-header on 'v' is on a [\"string\",\"null\"] property: only string, integer and boolean can be headers"
+    },
+    {
+      "name": "a nested path in the reason",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "object",
+            "properties": {
+              "price": {
+                "type": "number",
+                "x-mcp-header": "Price"
+              }
+            }
+          }
+        }
+      },
+      "rejected": "x-mcp-header on 'target.price' is on a \"number\" property: only string, integer and boolean can be headers"
+    },
+    {
+      "name": "the same name twice, in another case",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "a": {
+            "type": "string",
+            "x-mcp-header": "Region"
+          },
+          "b": {
+            "type": "object",
+            "properties": {
+              "c": {
+                "type": "string",
+                "x-mcp-header": "REGION"
+              }
+            }
+          }
+        }
+      },
+      "rejected": "x-mcp-header 'REGION' is used twice"
+    },
+    {
+      "name": "under items",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "list": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "x-mcp-header": "Item"
+            }
+          }
+        }
+      },
+      "rejected": "an x-mcp-header isn't reachable from the schema root through properties only"
+    },
+    {
+      "name": "under anyOf",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "v": {
+            "anyOf": [
+              {
+                "type": "string",
+                "x-mcp-header": "V"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          }
+        }
+      },
+      "rejected": "an x-mcp-header isn't reachable from the schema root through properties only"
+    },
+    {
+      "name": "under $defs",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "v": {
+            "$ref": "#/$defs/region"
+          }
+        },
+        "$defs": {
+          "region": {
+            "type": "string",
+            "x-mcp-header": "Region"
+          }
+        }
+      },
+      "rejected": "an x-mcp-header isn't reachable from the schema root through properties only"
+    },
+    {
+      "name": "under if/then",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "v": {
+            "type": "string"
+          }
+        },
+        "if": {
+          "properties": {
+            "v": {
+              "const": "a"
+            }
+          }
+        },
+        "then": {
+          "properties": {
+            "w": {
+              "type": "string",
+              "x-mcp-header": "W"
+            }
+          }
+        }
+      },
+      "rejected": "an x-mcp-header isn't reachable from the schema root through properties only"
+    },
+    {
+      "name": "on the root",
+      "inputSchema": {
+        "type": "object",
+        "x-mcp-header": "Root",
+        "properties": {}
+      },
+      "rejected": "an x-mcp-header isn't reachable from the schema root through properties only"
+    },
+    {
+      "name": "under patternProperties",
+      "inputSchema": {
+        "type": "object",
+        "patternProperties": {
+          "^r": {
+            "type": "string",
+            "x-mcp-header": "R"
+          }
+        }
+      },
+      "rejected": "an x-mcp-header isn't reachable from the schema root through properties only"
+    }
+  ]
+}

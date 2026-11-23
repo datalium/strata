@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Packs the .NET packages and proves they work (design/36-Packaging-And-Versioning.md, "Proving a package
-# works"): the solution makes exactly Strata's five packages at the repository's version, each with its
+# works"): the solution makes exactly Strata's six packages at the repository's version, each with its
 # licence, readme, XML docs and symbols; the engine's package carries the source generator, and the others
-# let it through; and an application that references only the packed hosting and AI packages builds and runs.
+# let it through; and an application that references only the packed hosting, AI and MCP packages builds and
+# runs.
 #
 # Leaves the packages in dotnet/artifacts/packages, which is what a release pushes.
 set -euo pipefail
@@ -22,7 +23,7 @@ fail() {
 rm -rf "$packages" "$smoke/obj" "$smoke/bin"
 dotnet pack "$root/dotnet/Datalium.Strata.sln" --configuration Release --output "$packages"
 
-expected="Datalium.Strata Datalium.Strata.AI Datalium.Strata.Cloud Datalium.Strata.Hosting Datalium.Strata.Storage"
+expected="Datalium.Strata Datalium.Strata.AI Datalium.Strata.Cloud Datalium.Strata.Hosting Datalium.Strata.Mcp Datalium.Strata.Storage"
 made=$(cd "$packages" && ls ./*.nupkg | sed -e 's|^\./||' -e "s|\.$version\.nupkg$||" | sort | tr '\n' ' ' | sed 's/ $//')
 [ "$made" = "$expected" ] || fail "expected the packages '$expected' at $version, and the solution made '$made'"
 
@@ -49,4 +50,4 @@ grep -qx 'analyzers/dotnet/cs/Datalium.Strata.SourceGenerators.dll' <<<"$(unzip 
 
 dotnet run --project "$smoke" --configuration Release
 
-echo "pack-smoke: five packages at $version, and an application built on them alone runs."
+echo "pack-smoke: six packages at $version, and an application built on them alone runs."

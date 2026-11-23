@@ -1,0 +1,51 @@
+[package]
+name = "datalium-strata-mcp"
+description = "Strata's own MCP client: an MCP server's tools, over stdio or Streamable HTTP, as Datalium Strata tools"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords = ["agents", "mcp", "model-context-protocol", "llm", "tools"]
+categories.workspace = true
+
+# design/50-MCP-Client.md: Strata implements the MCP spec itself, with no MCP dependency. `stdio`
+# starts servers as child processes; `http` speaks Streamable HTTP and brings reqwest.
+[features]
+default = ["stdio", "http"]
+stdio = ["tokio/process", "dep:libc"]
+http = ["dep:reqwest"]
+
+[dependencies]
+base64 = "0.23"
+datalium-strata = { workspace = true }
+metrics = "0.24"
+reqwest = { version = "0.13", default-features = false, features = ["rustls"], optional = true }
+serde_json = "1"
+tokio = { version = "1", features = ["io-util", "macros", "rt", "sync", "time"] }
+tracing = "0.1"
+
+[target.'cfg(unix)'.dependencies]
+libc = { version = "0.2", optional = true }
+
+[dev-dependencies]
+datalium-strata-ai = { workspace = true }
+metrics-util = { version = "0.20", default-features = false, features = ["debugging"] }
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["io-std", "macros", "net", "process", "rt-multi-thread", "test-util"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
+
+[[example]]
+name = "mcp_fixture_server"
+path = "examples/mcp_fixture_server.rs"
+
+[[test]]
+name = "mcp_stdio"
+required-features = ["stdio"]
+
+[[test]]
+name = "mcp_http"
+required-features = ["http"]

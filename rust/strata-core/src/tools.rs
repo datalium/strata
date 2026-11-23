@@ -6,7 +6,7 @@
 //! the [`ToolMiddleware`] it runs around every call
 //! (`design/23-Tool-Middleware.md`, SG-22).
 //!
-//! Dispatch is a hash lookup on the tool's `&'static str` name and a direct
+//! Dispatch is a hash lookup on the tool's name and a direct
 //! `dyn StrataTool` virtual call — no reflection-based type downcasting
 //! anywhere in this path.
 //!
@@ -281,9 +281,12 @@ pub fn argument_problems(arguments: &str, parameters: &serde_json::Value) -> Opt
 }
 
 /// Implemented by the zero-sized struct `#[strata_tool(...)]` generates for
-/// each annotated function.
+/// each annotated function, and by tools whose names are known only at run
+/// time (an MCP server's, `datalium-strata-mcp`).
 pub trait StrataTool: Send + Sync {
-    fn name(&self) -> &'static str;
+    /// The tool's name, which the registry dispatches on. A `&'static str`
+    /// (what `#[strata_tool]` returns) fits, and so does a name the tool owns.
+    fn name(&self) -> &str;
     fn schema(&self) -> serde_json::Value;
     fn execute<'a>(
         &'a self,
@@ -657,10 +660,10 @@ impl Terminal {
 #[derive(Clone, Default)]
 pub struct ToolRegistry {
     tools: Vec<Arc<dyn StrataTool>>,
-    index: HashMap<&'static str, usize>,
+    index: HashMap<Arc<str>, usize>,
     /// Names a subset left out of its parent: refused as not permitted, not
     /// as not found.
-    excluded: Arc<HashSet<&'static str>>,
+    excluded: Arc<HashSet<Arc<str>>>,
     /// Outermost first.
     middleware: Vec<Arc<dyn ToolMiddleware>>,
 }
@@ -695,7 +698,7 @@ impl ToolRegistry {
         if self.index.contains_key(name) {
             return Err(StrataError::DuplicateTool(name.to_string()));
         }
-        self.index.insert(name, self.tools.len());
+        self.index.insert(Arc::from(name), self.tools.len());
         self.tools.push(tool);
         Ok(())
     }
@@ -734,8 +737,8 @@ impl ToolRegistry {
         for name in names {
             let name = name.as_ref();
             match self.index.get_key_value(name) {
-                Some((&name, _)) => {
-                    chosen.insert(name);
+                Some((name, _)) => {
+                    chosen.insert(name.clone());
                 }
                 None => return Err(self.missing(name)),
             }
@@ -746,7 +749,7 @@ impl ToolRegistry {
             if chosen.contains(tool.name()) {
                 subset.try_register_arc(tool.clone())?;
             } else {
-                excluded.insert(tool.name());
+                excluded.insert(Arc::from(tool.name()));
             }
         }
         subset.excluded = Arc::new(excluded);
@@ -755,7 +758,7 @@ impl ToolRegistry {
     }
 
     /// The registered tools' names, in registration order.
-    pub fn names(&self) -> impl Iterator<Item = &'static str> + '_ {
+    pub fn names(&self) -> impl Iterator<Item = &str> + '_ {
         self.tools.iter().map(|tool| tool.name())
     }
 
@@ -901,6 +904,60 @@ mod tests {
         let manifest = registry.manifest();
         assert_eq!(manifest.as_array().unwrap().len(), 1);
         assert_eq!(manifest[0]["name"], "echo");
+    }
+
+    /// A tool whose name is learned at run time, as an MCP server's are.
+    struct NamedAtRunTime(String);
+
+    impl StrataTool for NamedAtRunTime {
+        fn name(&self) -> &str {
+            &self.0
+        }
+
+        fn schema(&self) -> serde_json::Value {
+            serde_json::json!({ "name": self.0 })
+        }
+
+        fn execute<'a>(
+            &'a self,
+            raw_args: &'a str,
+        ) -> Pin<Box<dyn Future<Output = Result<String, StrataError>> + Send + 'a>> {
+            Box::pin(async move { Ok(format!("{}:{raw_args}", self.0)) })
+        }
+    }
+
+    #[tokio::test]
+    async fn a_tool_with_an_owned_name_registers_dispatches_and_subsets() {
+        let mut registry = ToolRegistry::new();
+        registry
+            .register(Box::new(NamedAtRunTime(format!(
+                "github.{}",
+                "create_issue"
+            ))))
+            .register(Box::new(EchoTool));
+        assert!(matches!(
+            registry.try_register(Box::new(NamedAtRunTime("echo".to_string()))),
+            Err(StrataError::DuplicateTool(name)) if name == "echo"
+        ));
+
+        assert_eq!(
+            registry.names().collect::<Vec<_>>(),
+            ["github.create_issue", "echo"]
+        );
+        let result = registry
+            .dispatch("github.create_issue", "{}")
+            .await
+            .unwrap();
+        assert_eq!(result, "github.create_issue:{}");
+
+        let subset = registry.subset(["echo"]).unwrap();
+        let err = subset
+            .dispatch("github.create_issue", "{}")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, StrataError::ToolNotPermitted(name) if name == "github.create_issue")
+        );
     }
 
     #[tokio::test]

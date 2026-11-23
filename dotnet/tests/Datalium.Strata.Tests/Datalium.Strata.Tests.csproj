@@ -10,8 +10,6 @@
   <ItemGroup>
     <PackageReference Include="coverlet.collector" Version="6.0.4" />
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" />
-    <!-- The hosting tests build a real host and send its telemetry to an in-memory exporter. -->
-    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.15" />
     <!-- The live model tests (design/44) call an OpenAI-compatible endpoint through Microsoft.Extensions.AI. -->
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.11.1" />
     <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.11.1" />
@@ -27,6 +25,13 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The loopback HTTP MCP servers of the MCP tests run on Kestrel (design/50-MCP-Client.md). The shared framework
+         also brings Microsoft.Extensions.Hosting, for the hosting tests that build a real host and send its telemetry
+         to an in-memory exporter, so it needs no package reference of its own. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Using Include="Xunit" />
   </ItemGroup>
 
@@ -35,6 +40,8 @@
          tests that check them need neither that project nor BenchmarkDotNet. -->
     <Compile Include="..\..\benchmarks\Datalium.Strata.Benchmarks\Scenarios.cs" Link="Benchmarks\Scenarios.cs" />
     <Compile Include="..\..\benchmarks\Datalium.Strata.Benchmarks\Stats.cs" Link="Benchmarks\Stats.cs" />
+    <!-- The MCP fixture server's script, run in memory and behind Kestrel by the MCP tests (design/50-MCP-Client.md). -->
+    <Compile Include="..\Datalium.Strata.McpFixtureServer\FixtureServer.cs" Link="Mcp\FixtureServer.cs" />
   </ItemGroup>
 
   <ItemGroup>
@@ -43,6 +50,9 @@
     <ProjectReference Include="..\..\src\Datalium.Strata.Cloud\Datalium.Strata.Cloud.csproj" />
     <ProjectReference Include="..\..\src\Datalium.Strata.Hosting\Datalium.Strata.Hosting.csproj" />
     <ProjectReference Include="..\..\src\Datalium.Strata.AI\Datalium.Strata.AI.csproj" />
+    <ProjectReference Include="..\..\src\Datalium.Strata.Mcp\Datalium.Strata.Mcp.csproj" />
+    <!-- The stdio fixture server (design/50-MCP-Client.md, "Tests"), built beside the tests; not referenced as code. -->
+    <ProjectReference Include="..\Datalium.Strata.McpFixtureServer\Datalium.Strata.McpFixtureServer.csproj" ReferenceOutputAssembly="false" />
     <!-- Normal reference (not OutputItemType="Analyzer") so tests can drive the generator
          directly via CSharpGeneratorDriver for isolated diagnostic assertions. -->
     <ProjectReference Include="..\..\src\Datalium.Strata.SourceGenerators\Datalium.Strata.SourceGenerators.csproj" />

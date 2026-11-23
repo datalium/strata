@@ -1,0 +1,217 @@
+{
+  "description": "How a `text/event-stream` body becomes events (the WHATWG HTML \"server-sent events\" parsing rules), as a Streamable HTTP response is read (design/50-MCP-Client.md, \"Streamable HTTP\"), replayed by both engines' SSE tests (.NET reads with System.Net.ServerSentEvents.SseParser, so the fixture checks Strata reads it as Rust does). Lines end with `\\r\\n`, `\\n` or `\\r`. An empty line ends an event. A line starting with `:` is a comment. Otherwise the field is the text before the first `:` and the value the text after it, less one leading space (the whole line, and an empty value, when there is no `:`). `data` appends the value and a newline to the event's data; `event` sets its type; `id` sets the last event id, which carries over to later events, unless the value holds a NUL; `retry` and any other field are ignored. An event is dispatched only when its data isn't empty, with the final newline removed and the type `message` when none was set. Every case's input ends with an empty line: what happens to an unfinished event at the end of the stream is left out, since the parsers differ and a response always ends its event. `events` lists each event's `type`, `data` and `id` (null when no id has been seen).",
+  "cases": [
+    {
+      "name": "one event",
+      "input": "data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n\n",
+      "events": [
+        {
+          "type": "message",
+          "data": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}",
+          "id": null
+        }
+      ]
+    },
+    {
+      "name": "data lines are joined by a newline",
+      "input": "data: first\ndata: second\n\n",
+      "events": [
+        {
+          "type": "message",
+          "data": "first\nsecond",
+          "id": null
+        }
+      ]
+    },
+    {
+      "name": "no space after the colon",
+      "input": "data:tight\n\n",
+      "events": [
+        {
+          "type": "message",
+          "data": "tight",
+          "id": null
+        }
+      ]
+    },
+    {
+      "name": "only one space is removed",
+      "input": "data:  two\n\n",
+      "events": [
+        {
+          "type": "message",
+          "data": " two",
+          "id": null
+        }
+      ]
+    },
+    {
+      "name": "comments are ignored",
+      "input": ": keep-alive\n\n:\ndata: x\n\n",
+      "events": [
+        {
+          "type": "message",
+          "data": "x",
+          "id": null
+        }
+      ]
+    },
+    {
+      "name": "unknown fields are ignored",
+      "input": "foo: bar\nretry: 1000\ndata: x\n\n",
+      "events": [
+        {
+          "type": "message",
+          "data": "x",
+          "id": null
+        }
+      ]
+    },
+    {
+      "name": "an event type",
+      "input": "event: notice\ndata: x\n\n",
+      "events": [
+        {
+          "type": "notice",
+          "data": "x",
+          "id": null
+        }
+      ]
+    },
+    {
+      "name": "the type resets after each event",
+      "input": "event: notice\ndata: a\n\ndata: b\n\n",
+      "events": [
+        {
+          "type": "notice",
+          "data": "a",
+          "id": null
+        },
+        {
+          "type": "message",
+          "data": "b",
+          "id": null
+        }
+      ]
+    },
+    {
+      "name": "an id carries over",
+      "input": "id: 7\ndata: a\n\ndata: b\n\n",
+      "events": [
+        {
+          "type": "message",
+          "data": "a",
+          "id": "7"
+        },
+        {
+          "type": "message",
+          "data": "b",
+          "id": "7"
+        }
+      ]
+    },
+    {
+      "name": "an id with a NUL is ignored",
+      "input": "id: 1\ndata: a\n\nid: 2\u0000\ndata: b\n\n",
+      "events": [
+        {
+          "type": "message",
+          "data": "a",
+          "id": "1"
+        },
+        {
+          "type": "message",
+          "data": "b",
+          "id": "1"
+        }
+      ]
+    },
+    {
+      "name": "CRLF line endings",
+      "input": "data: a\r\ndata: b\r\n\r\n",
+      "events": [
+        {
+          "type": "message",
+          "data": "a\nb",
+          "id": null
+        }
+      ]
+    },
+    {
+      "name": "CR line endings",
+      "input": "data: a\rdata: b\r\r",
+      "events": [
+        {
+          "type": "message",
+          "data": "a\nb",
+          "id": null
+        }
+      ]
+    },
+    {
+      "name": "an event with no data isn't dispatched",
+      "input": "event: empty\n\ndata: x\n\n",
+      "events": [
+        {
+          "type": "message",
+          "data": "x",
+          "id": null
+        }
+      ]
+    },
+    {
+      "name": "an empty data line is data",
+      "input": "data\n\n",
+      "events": [
+        {
+          "type": "message",
+          "data": "",
+          "id": null
+        }
+      ]
+    },
+    {
+      "name": "blank lines between events",
+      "input": "\n\ndata: a\n\n\n\ndata: b\n\n",
+      "events": [
+        {
+          "type": "message",
+          "data": "a",
+          "id": null
+        },
+        {
+          "type": "message",
+          "data": "b",
+          "id": null
+        }
+      ]
+    },
+    {
+      "name": "a notification then the response",
+      "input": "data: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{\"progress\":1}}\n\ndata: {\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{\"content\":[]}}\n\n",
+      "events": [
+        {
+          "type": "message",
+          "data": "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{\"progress\":1}}",
+          "id": null
+        },
+        {
+          "type": "message",
+          "data": "{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{\"content\":[]}}",
+          "id": null
+        }
+      ]
+    },
+    {
+      "name": "non-ASCII data",
+      "input": "data: 天気\n\n",
+      "events": [
+        {
+          "type": "message",
+          "data": "天気",
+          "id": null
+        }
+      ]
+    }
+  ]
+}

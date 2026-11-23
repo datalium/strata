@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- design/50-MCP-Client.md, "Tests": the scripted MCP server the .NET tests run as a stdio child process. Its
+       script (FixtureServer.cs) is also compiled into the test project, which runs it in memory and behind Kestrel.
+       Not a package, and no MCP SDK: Strata's tests never use one. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+</Project>
