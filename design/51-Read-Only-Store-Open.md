@@ -310,12 +310,13 @@ Built on 2026-11-23, in both engines and the CLI at one commit, for `1.0.0-rc.1`
 - **Rust:** the `redis` crate has no read-only script call, so it sends `EVALSHA_RO` and falls back to `EVAL_RO` with the body on `NOSCRIPT`. It never needs `SCRIPT LOAD`.
 - **The flagged scripts** are `#!lua flags=no-writes\n` plus the existing ones. Writable stores keep the unflagged scripts with `EVAL`, because Redis before 7 can't parse the flag line.
 - **Redis 7 is detected** from `INFO server`. A server that refuses `INFO`, as a read-only ACL user does, is taken to be 7 or later, in both engines.
-- **The ACL user.** The tests prove that a user without write commands, `EVAL`, `EVALSHA` or `FCALL` can read through the store. Desktop's docs should list what such a user needs:
+- **The ACL user.** The tests, in both engines, read through the store as a user allowed only the list below, on the prefix's keys. Desktop's docs list it:
   - `+@read`
   - `+@transaction`, for the `MULTI`/`EXEC` that reads a list's last element and length
   - `+time`, which the lease script calls
   - `+eval_ro` and `+evalsha_ro`
-  - a key pattern for the prefix
+  - `+echo`, in .NET only: StackExchange.Redis sends `ECHO` as it connects, and fails to connect without it. Every other command its handshake sends (`CLIENT SETNAME`, `INFO`, `CONFIG GET`, `CLUSTER NODES`, `SUBSCRIBE`) may be refused. The `redis` crate needs nothing more. Found by Desktop's tests, which use the minimal list; the .NET test's user had been every command but writes, so it hadn't shown this
+  - a key pattern for the prefix (`~{prefix}:*`)
 
 **Hot journal.** As designed. SQLite reports `SQLITE_READONLY_ROLLBACK` on the first read. The store maps it to the shared message at open and leaves the file and its journal untouched. A hot journal that appears after open surfaces as the driver's error.
 

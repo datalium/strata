@@ -1070,8 +1070,9 @@ public sealed class ReadOnlyStoreTests
     }
 
     /// <summary>
-    /// The ACL user the Redis test reads as: every command but writes, the dangerous ones (<c>INFO</c> among them, so the
-    /// store can't ask the version), <c>EVAL</c>, <c>EVALSHA</c> and <c>FCALL</c>.
+    /// The ACL user the Redis test reads as, with only what design/51 lists for a read-only user (no <c>INFO</c>, so the
+    /// store can't ask the version): <c>@read</c>, <c>@transaction</c>, <c>TIME</c>, <c>EVAL_RO</c>, <c>EVALSHA_RO</c>,
+    /// and <c>ECHO</c>, which StackExchange.Redis sends as it connects and can't connect without. Only the prefix's keys.
     /// </summary>
     private const string RedisReader = "strata_reader_dotnet";
 
@@ -1090,7 +1091,8 @@ public sealed class ReadOnlyStoreTests
         await CheckpointQueryContractTests.SaveSeedAsync(writable);
         Assert.NotNull((await writable.TryAcquireLeaseAsync(LeasedThread, "worker-1", LeaseTtl)).Lease);
         await server.ExecuteAsync(
-            "ACL", "SETUSER", RedisReader, "reset", "on", $">{RedisReader}", "~*", "&*", "+@all", "-@write", "-@dangerous", "-eval", "-evalsha", "-fcall");
+            "ACL", "SETUSER", RedisReader, "reset", "on", $">{RedisReader}", $"~{sandbox.Prefix}:*", "resetchannels",
+            "+@read", "+@transaction", "+time", "+eval_ro", "+evalsha_ro", "+echo");
         var before = await RedisSnapshotAsync(sandbox);
 
         var options = RedisConnection.ToConfigurationOptions(TestBackends.RedisUrl);
