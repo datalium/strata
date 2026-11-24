@@ -6,6 +6,32 @@ Every NuGet package, every crate and the `strata` CLI share one version and are 
 
 Each entry ends with the wire formats that version writes and reads. The rules behind them are in `design/Arch-Specs/STRATA-SPEC-005.md`, and the formats in `schema/README.md`.
 
+## Unreleased
+
+### Changes
+
+- **Checkpoint stores can be opened read-only** (FR-MP-12, `design/51-Read-Only-Store-Open.md`). This is for tools that only look, like the `strata` CLI and Strata Desktop.
+  - **.NET:** `EfCoreCheckpointStore.OpenReadOnlyAsync(path)`, `PostgresCheckpointStore.OpenReadOnlyAsync(connectionString)` and `RedisCheckpointStore.ConnectReadOnlyAsync(url)`.
+  - **Rust:** `SqliteCheckpointStore::open_read_only`, `PostgresCheckpointStore::connect_read_only` and `RedisCheckpointStore::connect_read_only`.
+  - **What a read-only store does:**
+    - Opening creates nothing and never migrates, and reads never write.
+    - It reads `checkpoints` schema versions 1 to the current one.
+    - It refuses a missing SQLite file, a database with no Strata log, version 0, a newer version, a Redis prefix no current runtime has indexed, and a missing blob directory. The messages are the same in both engines (`schema/fixtures/checkpoint-log/read-only-errors.json`).
+    - It refuses every write before it reaches the database.
+    - Where the database can, it enforces this too. SQLite opens read-only with `PRAGMA query_only`, and Postgres sessions run with `default_transaction_read_only`, so a role that can only `SELECT`, or a standby, works. On Redis 7 and later the read scripts run with `EVAL_RO`, so a user denied writes and `EVAL` works.
+    - `IsReadOnly` / `is_read_only()` says which kind a store is.
+  - Writable stores are unchanged.
+- **The `strata` CLI opens every store read-only**, so an inspector no longer changes what it inspects. For users this means:
+  - A missing SQLite path is an error. It used to create an empty database and list nothing.
+  - A database at `checkpoints` version 0, from before the version table, is refused, not migrated. Open it once with a runtime first.
+  - A Redis prefix that no current runtime has indexed is refused, not indexed.
+  - A `--blobs` directory that doesn't exist is refused.
+- **The cross-engine test** has a new step: the CLI reads both engines' version 1 databases read-only before any engine migrates them, and finds them unchanged.
+
+### Wire formats
+
+Unchanged from `0.9.0`.
+
 ## 0.9.0 (2026-11-25)
 
 The first stable release. The three things it waited for are done in both engines: the wire formats are a normative spec, STRATA-SPEC-005, with a cross-engine migration test; StrataOps, an application built on Strata (not public yet), has finished its load report; and StrataOps builds from the published packages. **No version from `0.9.0` until `1.0.0-rc.1` changes a wire format.** The engines' code is the same as in `0.9.0-preview.3`: what changed is the spec, tests and the docs' code samples.

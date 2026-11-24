@@ -3,13 +3,18 @@
 //! same code the Rust runtime writes with — so the CLI has no copy of the log
 //! layout, the listing rules or the status names to keep in step.
 //!
-//! `--storage` is a SQLite file path (created if missing, and brought up to
-//! date like any store opening it), a `postgres://` URL, or a `redis://` URL.
-//! A Redis key prefix other than `strata` is given as `?prefix=<name>`.
+//! `--storage` is a SQLite file path, a `postgres://` URL, or a `redis://`
+//! URL. A Redis key prefix other than `strata` is given as `?prefix=<name>`.
 //! Either runtime's logs read the same, since both write the shared layout.
 //! Offloaded values (`design/41-Checkpoint-Efficiency.md`, "Offload") are
 //! read from the store's own database, or from a filesystem blob store given
 //! with `--blobs <dir>`.
+//!
+//! The CLI is read-only: every store is opened with its read-only factory
+//! (`design/51-Read-Only-Store-Open.md`), so it creates nothing, migrates
+//! nothing and writes nothing. A missing SQLite file, a database with no
+//! Strata log or at a schema version this build can't read, a Redis prefix no
+//! current runtime has indexed and a missing `--blobs` directory are refused.
 
 use std::sync::Arc;
 
@@ -39,8 +44,7 @@ pub async fn open(storage: &str) -> Result<Storage, String> {
 }
 
 /// [`open`], reading offloaded values from the filesystem blob store at
-/// `blobs` instead of the store's own database. The CLI writes nothing, so no
-/// value is offloaded by it whatever the threshold.
+/// `blobs` instead of the store's own database. The directory must exist.
 pub async fn open_with(storage: &str, blobs: Option<&str>) -> Result<Storage, String> {
     fn both<S: CheckpointStore + CheckpointQuery + 'static>(store: S) -> Storage {
         let store = Arc::new(store);
@@ -50,18 +54,17 @@ pub async fn open_with(storage: &str, blobs: Option<&str>) -> Result<Storage, St
         }
     }
 
-    let offload = blobs.map(|directory| {
-        Offload::new()
-            .with_threshold(usize::MAX)
-            .with_blobs(Arc::new(FileSystemBlobStore::new(directory)))
-    });
+    // A read-only store uses only the offload's blob store, as where
+    // offloaded values are read from.
+    let offload = blobs
+        .map(|directory| Offload::new().with_blobs(Arc::new(FileSystemBlobStore::new(directory))));
     let lower = storage.to_ascii_lowercase();
     if lower.starts_with("postgres://") || lower.starts_with("postgresql://") {
         let mut options = PostgresStoreOptions::new();
         if let Some(offload) = offload {
             options = options.with_offload(offload);
         }
-        let store = PostgresCheckpointStore::connect_with(storage, options)
+        let store = PostgresCheckpointStore::connect_read_only(storage, options)
             .await
             .map_err(|e| e.0)?;
         Ok(both(store))
@@ -71,7 +74,7 @@ pub async fn open_with(storage: &str, blobs: Option<&str>) -> Result<Storage, St
         if let Some(offload) = offload {
             options = options.with_offload(offload);
         }
-        let store = RedisCheckpointStore::connect_with(&url, options)
+        let store = RedisCheckpointStore::connect_read_only(&url, options)
             .await
             .map_err(|e| e.0)?;
         Ok(both(store))
@@ -80,13 +83,14 @@ pub async fn open_with(storage: &str, blobs: Option<&str>) -> Result<Storage, St
         if let Some(offload) = offload {
             options = options.with_offload(offload);
         }
-        let store = SqliteCheckpointStore::open_with(storage, options).map_err(|e| e.0)?;
+        let store = SqliteCheckpointStore::open_read_only(storage, options).map_err(|e| e.0)?;
         Ok(both(store))
     }
 }
 
-/// Splits a `prefix` query parameter off a Redis URL.
-fn redis_prefix(url: &str) -> (String, String) {
+/// Splits a `prefix` query parameter off a Redis URL: the URL the store
+/// connects to, and the prefix.
+pub fn redis_prefix(url: &str) -> (String, String) {
     let Some((base, query)) = url.split_once('?') else {
         return (url.to_string(), DEFAULT_PREFIX.to_string());
     };
@@ -163,30 +167,6 @@ impl Storage {
     /// or `None` when nobody holds it.
     pub async fn lease(&self, thread_id: &str) -> Result<Option<ThreadLease>, String> {
         self.store.get_lease(thread_id).await.map_err(|e| e.0)
-    }
-
-    /// `owner` takes `thread_id`'s lease for `ttl`, if it is free. For seeding
-    /// a held thread in tests: the CLI itself never writes.
-    pub async fn hold(
-        &self,
-        thread_id: &str,
-        owner: &str,
-        ttl: std::time::Duration,
-    ) -> Result<Option<ThreadLease>, String> {
-        let attempt = self
-            .store
-            .try_acquire_lease(thread_id, owner, ttl)
-            .await
-            .map_err(|e| e.0)?;
-        Ok(attempt.acquired())
-    }
-
-    /// Appends `checkpoint` to its thread's log and returns its sequence.
-    /// For seeding a log in tests: the CLI itself never writes.
-    pub async fn insert(&self, checkpoint: &Checkpoint) -> Result<i64, String> {
-        self.store.save(checkpoint.clone()).await.map_err(|e| e.0)?;
-        let log = self.log(&checkpoint.thread_id).await?;
-        Ok(log.last().map_or(0, |entry| entry.sequence))
     }
 }
 

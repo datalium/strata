@@ -1,0 +1,20 @@
+{
+  "description": "The errors a read-only checkpoint store reports (design/51-Read-Only-Store-Open.md, \"Errors\"), the same in both engines and the strata CLI. Each message is a template: a {name} is replaced by the value named, and the rest is matched exactly. Opening a store read-only creates nothing, never migrates, and refuses what it can't read; every write on it is refused. Connection failures keep the driver's own error. Read by both runtimes' read-only store tests and the CLI's.",
+  "open": {
+    "missing_sqlite_file": "no SQLite store at '{path}': the file doesn't exist",
+    "no_strata_log": "'{store}' has no Strata checkpoint log",
+    "newer_version": "database is at checkpoints schema version {found}, and this build knows {known}: upgrade the runtime",
+    "version_zero": "database is at checkpoints schema version 0, and a read-only store reads 1 to {known}: open it once with a runtime to migrate it",
+    "hot_journal": "'{path}' has an unfinished write: open it once with the application that writes it",
+    "redis_prefix_not_indexed": "no Strata thread index under prefix '{prefix}': nothing was written there, or no current runtime has connected to it",
+    "missing_blob_directory": "blob directory '{dir}' doesn't exist"
+  },
+  "write": {
+    "template": "the store was opened read-only: {operation} is refused",
+    "operations": ["save", "acquire lease", "renew lease", "release lease", "purge", "migrate", "rebuild index"]
+  },
+  "store_names": {
+    "sqlite": "the path the store was opened with",
+    "postgres": "the database name (current_database())"
+  }
+}

@@ -1,9 +1,11 @@
 //! `strata thread list/inspect` and `strata checkpoint log/diff/replay`
-//! end-to-end: seed a temp SQLite checkpoint log directly via `cli::store`
-//! (the same `datalium-strata-memory` store the runtime writes with)
-//! (there's no `strata checkpoint import` command — seeding is test setup,
-//! not a CLI feature), then drive the actual compiled binary as a
-//! subprocess against it.
+//! end-to-end: seed a temp SQLite checkpoint log through
+//! `datalium-strata-memory`'s writable store (the one the runtime writes
+//! with; the CLI only reads, and there's no `strata checkpoint import`
+//! command — seeding is test setup, not a CLI feature), then drive the actual
+//! compiled binary as a subprocess against it.
+
+mod common;
 
 use std::process::Command;
 
@@ -48,7 +50,7 @@ fn checkpoint(
 #[tokio::test]
 async fn a_thread_frozen_inside_a_subgraph_shows_where_it_is_waiting() {
     let db_path = temp_db_path();
-    let pool = cli::store::open(db_path.to_str().unwrap()).await.unwrap();
+    let pool = common::seed(db_path.to_str().unwrap()).await;
     // The shared fixture: suspended at the subgraph node `Work`, whose child is
     // waiting at `Approve`.
     let nested: Checkpoint = serde_json::from_str(
@@ -109,7 +111,7 @@ async fn a_thread_frozen_inside_a_subgraph_shows_where_it_is_waiting() {
 #[tokio::test]
 async fn a_thread_with_no_nested_child_is_shown_exactly_as_before() {
     let db_path = temp_db_path();
-    let pool = cli::store::open(db_path.to_str().unwrap()).await.unwrap();
+    let pool = common::seed(db_path.to_str().unwrap()).await;
     pool.insert(&checkpoint(
         "plain",
         "CallLLM",
@@ -141,7 +143,7 @@ async fn a_thread_with_no_nested_child_is_shown_exactly_as_before() {
 #[tokio::test]
 async fn thread_list_shows_the_latest_checkpoint_per_thread() {
     let db_path = temp_db_path();
-    let pool = cli::store::open(db_path.to_str().unwrap()).await.unwrap();
+    let pool = common::seed(db_path.to_str().unwrap()).await;
 
     pool.insert(&checkpoint(
         "thread_a",
@@ -203,7 +205,7 @@ async fn thread_list_shows_the_latest_checkpoint_per_thread() {
 #[tokio::test]
 async fn thread_list_filters_by_status() {
     let db_path = temp_db_path();
-    let pool = cli::store::open(db_path.to_str().unwrap()).await.unwrap();
+    let pool = common::seed(db_path.to_str().unwrap()).await;
 
     let mut completed = checkpoint("thread_done", "End", "End", serde_json::json!({}));
     completed.status = CheckpointStatus::Completed;
@@ -241,7 +243,7 @@ async fn thread_list_filters_by_status() {
 #[tokio::test]
 async fn thread_inspect_reports_the_checkpoint_count_and_latest_state() {
     let db_path = temp_db_path();
-    let pool = cli::store::open(db_path.to_str().unwrap()).await.unwrap();
+    let pool = common::seed(db_path.to_str().unwrap()).await;
     pool.insert(&checkpoint(
         "thread_a",
         "CallLLM",
@@ -285,7 +287,7 @@ async fn thread_inspect_reports_the_checkpoint_count_and_latest_state() {
 #[tokio::test]
 async fn checkpoint_log_lists_every_checkpoint_in_order() {
     let db_path = temp_db_path();
-    let pool = cli::store::open(db_path.to_str().unwrap()).await.unwrap();
+    let pool = common::seed(db_path.to_str().unwrap()).await;
     pool.insert(&checkpoint(
         "thread_a",
         "EntryPoint",
@@ -335,7 +337,7 @@ async fn checkpoint_log_lists_every_checkpoint_in_order() {
 #[tokio::test]
 async fn checkpoint_diff_reports_only_changed_top_level_fields() {
     let db_path = temp_db_path();
-    let pool = cli::store::open(db_path.to_str().unwrap()).await.unwrap();
+    let pool = common::seed(db_path.to_str().unwrap()).await;
     pool.insert(&checkpoint(
         "thread_a",
         "EntryPoint",
@@ -403,7 +405,7 @@ async fn checkpoint_diff_reports_only_changed_top_level_fields() {
 #[tokio::test]
 async fn checkpoint_replay_loads_the_requested_historical_state() {
     let db_path = temp_db_path();
-    let pool = cli::store::open(db_path.to_str().unwrap()).await.unwrap();
+    let pool = common::seed(db_path.to_str().unwrap()).await;
     pool.insert(&checkpoint(
         "thread_a",
         "CallLLM",
@@ -454,7 +456,7 @@ async fn checkpoint_replay_loads_the_requested_historical_state() {
 #[tokio::test]
 async fn checkpoint_replay_of_an_unknown_sequence_fails_cleanly() {
     let db_path = temp_db_path();
-    cli::store::open(db_path.to_str().unwrap()).await.unwrap();
+    common::create_sqlite(db_path.to_str().unwrap());
 
     let output = strata()
         .args([
@@ -475,7 +477,7 @@ async fn checkpoint_replay_of_an_unknown_sequence_fails_cleanly() {
 #[tokio::test]
 async fn a_thread_that_failed_inside_a_subgraph_says_where_it_failed_not_where_it_waits() {
     let db_path = temp_db_path();
-    let pool = cli::store::open(db_path.to_str().unwrap()).await.unwrap();
+    let pool = common::seed(db_path.to_str().unwrap()).await;
     // The shared fixture: failed at the subgraph node `Work`, whose child
     // failed at `Send`.
     let failed: Checkpoint = serde_json::from_str(
@@ -518,7 +520,7 @@ async fn a_thread_that_failed_inside_a_subgraph_says_where_it_failed_not_where_i
 #[tokio::test]
 async fn a_thread_with_decisions_shows_who_decided_at_which_level() {
     let db_path = temp_db_path();
-    let pool = cli::store::open(db_path.to_str().unwrap()).await.unwrap();
+    let pool = common::seed(db_path.to_str().unwrap()).await;
     // The shared fixtures (design/21-Typed-Human-Signals.md): a flat failure
     // after Alice approved, and a failure inside `Work` after Bob rejected.
     for name in ["decision-failed.json", "nested-decision.json"] {
@@ -595,7 +597,7 @@ async fn a_thread_with_decisions_shows_who_decided_at_which_level() {
 #[tokio::test]
 async fn a_cancelled_thread_says_where_and_why_it_was_cancelled() {
     let db_path = temp_db_path();
-    let pool = cli::store::open(db_path.to_str().unwrap()).await.unwrap();
+    let pool = common::seed(db_path.to_str().unwrap()).await;
     // The shared fixtures (`design/17-Async-Execution.md`): one cancelled at
     // `Charge`, one at the subgraph node `Work` whose child was at `Send`.
     for name in ["cancelled.json", "nested-cancelled.json"] {
@@ -673,7 +675,7 @@ async fn a_cancelled_thread_says_where_and_why_it_was_cancelled() {
 #[tokio::test]
 async fn an_ended_thread_says_where_it_stood_why_and_by_whom() {
     let db_path = temp_db_path();
-    let pool = cli::store::open(db_path.to_str().unwrap()).await.unwrap();
+    let pool = common::seed(db_path.to_str().unwrap()).await;
     // The shared fixtures (`design/28-Ending-A-Thread.md`): one ended at
     // `PrepareWireTransfer` by `oncall`, one ended while its child waited at
     // `Approve` inside the subgraph node `Work`.
@@ -746,7 +748,7 @@ async fn an_ended_thread_says_where_it_stood_why_and_by_whom() {
 #[tokio::test]
 async fn a_running_thread_says_where_its_run_is() {
     let db_path = temp_db_path();
-    let pool = cli::store::open(db_path.to_str().unwrap()).await.unwrap();
+    let pool = common::seed(db_path.to_str().unwrap()).await;
     // The shared fixtures (`design/33-Durable-Execution.md`): a run past `A`,
     // one inside the subgraph node `Work`, a resume's claim with its
     // decision, and a run that finished.
@@ -839,7 +841,7 @@ async fn a_running_thread_says_where_its_run_is() {
 #[tokio::test]
 async fn a_thread_shows_its_caller_metadata_and_can_be_listed_by_it() {
     let db_path = temp_db_path();
-    let pool = cli::store::open(db_path.to_str().unwrap()).await.unwrap();
+    let pool = common::seed(db_path.to_str().unwrap()).await;
     // The shared fixtures (`design/18-Run-Observability.md`): tenant `acme` on
     // both, incident INC-284891 on one and INC-284892 on the other, the
     // second beside the engine's own `error` keys.
@@ -915,8 +917,11 @@ async fn a_thread_shows_its_caller_metadata_and_can_be_listed_by_it() {
     assert!(!bad.status.success());
 }
 
+/// A log from before the version table (the checkpoints component's version
+/// 0) is refused, not migrated, by the read-only CLI; once the application's
+/// runtime has opened it, the CLI reads it (`design/51-Read-Only-Store-Open.md`).
 #[tokio::test]
-async fn a_log_from_before_nested_checkpoints_is_upgraded_when_opened() {
+async fn a_log_from_before_nested_checkpoints_is_refused_until_a_runtime_migrates_it() {
     let db_path = temp_db_path();
     // The `checkpoints` table as it was before nested checkpoints: no
     // `nested` column. Seeded directly, as a file an older runtime left behind.
@@ -936,24 +941,28 @@ async fn a_log_from_before_nested_checkpoints_is_upgraded_when_opened() {
         )
         .unwrap();
     }
+    let before = common::sha256(&db_path);
+    let list = || {
+        strata()
+            .args(["thread", "list", "--json", "--storage"])
+            .arg(&db_path)
+            .output()
+            .unwrap()
+    };
 
-    // Every command reads `nested`, so this only works if opening upgraded the file.
-    let list = strata()
-        .args(["thread", "list", "--json", "--storage"])
-        .arg(&db_path)
-        .output()
-        .unwrap();
+    let refused = list();
+    assert!(!refused.status.success());
+    let known = datalium_strata_memory::schema_versions::CHECKPOINTS_VERSION.to_string();
     assert!(
-        list.status.success(),
+        String::from_utf8_lossy(&refused.stderr)
+            .contains(&common::open_error("version_zero", &[("known", &known)])),
         "{}",
-        String::from_utf8_lossy(&list.stderr)
+        String::from_utf8_lossy(&refused.stderr)
     );
-    let list: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
-    assert_eq!(list[0]["thread_id"], "old_thread");
-    assert_eq!(list[0]["suspended_node"], "CallLLM");
+    assert_eq!(common::sha256(&db_path), before, "the CLI migrated nothing");
 
-    // The upgraded file takes a checkpoint with a child, and opening it again is a no-op.
-    let pool = cli::store::open(db_path.to_str().unwrap()).await.unwrap();
+    // The application's runtime opens it, which brings it up to date.
+    let pool = common::seed(db_path.to_str().unwrap()).await;
     let nested: Checkpoint = serde_json::from_str(
         &std::fs::read_to_string(format!(
             "{}/../schema/fixtures/checkpoint-lifecycle/nested.json",
@@ -963,19 +972,36 @@ async fn a_log_from_before_nested_checkpoints_is_upgraded_when_opened() {
     )
     .unwrap();
     pool.insert(&nested).await.unwrap();
-    let history = pool.log("thread_nested_demo").await.unwrap();
+    drop(pool);
+
+    let listed = list();
+    assert!(
+        listed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&listed.stderr)
+    );
+    let listed: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    let old = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|thread| thread["thread_id"] == "old_thread")
+        .unwrap();
+    assert_eq!(old["suspended_node"], "CallLLM");
+    let storage = cli::store::open(db_path.to_str().unwrap()).await.unwrap();
+    let history = storage.log("thread_nested_demo").await.unwrap();
     assert_eq!(
         cli::store::waiting_path(&history[0].checkpoint).as_deref(),
         Some("Work/Approve")
     );
-    let old = pool.log("old_thread").await.unwrap();
+    let old = storage.log("old_thread").await.unwrap();
     assert_eq!(old[0].checkpoint.nested, None);
 }
 
 #[tokio::test]
 async fn inspect_shows_the_hop_count_of_a_graph_with_a_hop_limit() {
     let db_path = temp_db_path();
-    let pool = cli::store::open(db_path.to_str().unwrap()).await.unwrap();
+    let pool = common::seed(db_path.to_str().unwrap()).await;
     // `design/24-Loop-Circuit-Breaker.md`: a thread the breaker stopped before
     // `B`, and one from a graph without a limit.
     let mut tripped = checkpoint("thread_hop_limit", "B", "B", serde_json::json!({ "n": 3 }));

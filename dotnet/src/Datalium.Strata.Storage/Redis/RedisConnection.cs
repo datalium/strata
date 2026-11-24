@@ -93,9 +93,11 @@ public static class RedisConnection
     }
 
     /// <summary><see cref="Connect"/> without blocking a thread on the connection.</summary>
-    public static Task<ConnectionMultiplexer> ConnectAsync(string url)
+    public static Task<ConnectionMultiplexer> ConnectAsync(string url) => ConnectAsync(ToConfigurationOptions(url));
+
+    /// <summary><see cref="ConnectAsync(string)"/> with <paramref name="options"/> already parsed.</summary>
+    internal static Task<ConnectionMultiplexer> ConnectAsync(ConfigurationOptions options)
     {
-        var options = ToConfigurationOptions(url);
         options.ConnectTimeout = 5_000;
         options.AbortOnConnectFail = true;
         return ConnectionMultiplexer.ConnectAsync(options);

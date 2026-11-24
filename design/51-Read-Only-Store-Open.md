@@ -13,7 +13,7 @@ For a runtime that's right: a store has one application, and that application sh
 
 This document adds **FR-MP-12**: every SQL and Redis checkpoint store can be opened read-only. It is **DK-1** of Strata Desktop's brief (`27-desktop-product-brief.md` §6, in `strata-specs`), whose preview reads stores and must never change them, and the `strata` CLI moves to it too. It lands in both engines and the CLI at one commit (strict parity).
 
-It is a blueprint, written before implementation (2026-11-23). "Review decisions" lists the questions for review with the recommendation the build follows, and "Implementation Status" at the end will record where the build diverged.
+It was written as a blueprint before implementation, and built the same day (2026-11-23). "Review decisions" lists the questions for review with the recommendation the build follows. "Implementation Status" at the end records where the build diverged.
 
 ---
 
@@ -160,7 +160,7 @@ The same messages in both engines and the CLI, pinned by `schema/fixtures/checkp
 | A hot SQLite journal | `'<path>' has an unfinished write: open it once with the application that writes it` |
 | Redis prefix with no index | `no Strata thread index under prefix '<prefix>': nothing was written there, or no current runtime has connected to it` |
 | Missing blob directory | `blob directory '<dir>' doesn't exist` |
-| A write | `the store was opened read-only: <operation> is refused` (`save`, `acquire lease`, `renew lease`, `release lease`, `purge`) |
+| A write | `the store was opened read-only: <operation> is refused` (`save`, `acquire lease`, `renew lease`, `release lease`, `purge`, and Postgres `migrate` and Redis `rebuild index`) |
 
 `<store>` is the SQLite path, or the Postgres database name. Connection failures (a refused connection, bad credentials) keep the driver's own error.
 
@@ -269,7 +269,64 @@ Recommendations are in bold.
 
 ## Implementation Status
 
-Not built. This section records the build when it lands.
+Built on 2026-11-23, in both engines and the CLI at one commit, for `1.0.0-rc.1`. The API, semantics and messages are as above, apart from the differences recorded here.
+
+**Code.**
+
+| | .NET (`Datalium.Strata.Storage`) | Rust (`datalium-strata-memory`) |
+|---|---|---|
+| Shared helper (messages, version check, blob directory check) | `ReadOnlyStores.cs` (internal) | `src/read_only.rs` (private) |
+| SQLite | `EfCoreCheckpointStore.OpenReadOnlyAsync`: one owned, unpooled `ReadOnly` connection | `SqliteCheckpointStore::open_read_only`: `SQLITE_OPEN_READ_ONLY \| NO_MUTEX` |
+| Postgres | `PostgresCheckpointStore.OpenReadOnlyAsync`: a private constructor with no `PostgresPreparation` | `PostgresCheckpointStore::connect_read_only` |
+| Redis | `RedisCheckpointStore.ConnectReadOnlyAsync` | `RedisCheckpointStore::connect_read_only`, and `pub const NO_WRITES_FLAG` |
+| Blob directory | Checked in `ReadOnlyStores` | A new `BlobStore::check_readable`, which defaults to `Ok(())`, so other blob stores still compile; `FileSystemBlobStore` checks that its root is a directory |
+| Tests | `Backends/ReadOnlyStoreTests.cs` (24) | `tests/read_only_stores.rs` (34); `cli/tests/read_only.rs` (5) |
+
+**Differences from the blueprint.**
+
+- **Two more writes are refused:** Postgres's `MigrateAsync` / `migrate()`, as `migrate`, and Redis's `RebuildIndexAsync` / `rebuild_index()`, as `rebuild index`. Both are in the fixture.
+- **Postgres's `<store>` is `current_database()`.** A mistyped schema in `search_path` therefore reads as, for example, `'strata' has no Strata checkpoint log`. The setting is appended to any `Options` / `options` already in the connection string, so a caller's `search_path` survives.
+- **Retries of the checks at open** are counted under the existing `load` operation, so the `strata.store.retries` label set is unchanged.
+- **A version table with no `checkpoints` row** counts as version 0.
+- **Rust test hooks.** `SqliteCheckpointStore::execute_unguarded` and `PostgresCheckpointStore::execute_unguarded` are `pub` but `#[doc(hidden)]`, because the integration tests need them to show that the database itself refuses a write. .NET uses internal accessors instead.
+- **A read-only .NET SQLite store reads leases on the system clock**, since `SqliteStoreOptions` has no `TimeProvider`.
+- **Order of the checks at open.** In every store, the blob directory is checked first, then the store. A SQLite path that names a directory gets the missing-file message, in both engines.
+- **Write options have no effect, including invalid ones.** A zero `FinishedThreadTtl`, `FullEvery = 1` or `Threshold = 0` would make a writable store throw. A read-only store ignores them.
+- **The version is fixed at open.** A store opened read-only on a version 1 database keeps reading it as version 1, even if a runtime later migrates it to version 2 and offloads values to `checkpoint_blobs`. Those values then read as missing blobs until the store is reopened. That follows "reads exactly as at open". A long-lived reader like Desktop should reopen a connection when it refreshes.
+- **Small engine differences in corner cases:**
+  - An empty SQLite path is an `ArgumentException` in .NET, but the missing-file message in Rust.
+  - For Redis 7 detection, .NET requires every endpoint in a multi-endpoint configuration string to be at 7 or later, and keeps a caller's `version=`. Rust checks `INFO` on its one connection.
+
+**Review decision 8 (WAL), tested on Windows and Linux.**
+
+- **While the application that writes the file has it open,** a read-only store reads its latest commits, including those still only in `-wal`. The main file and `-wal` are unchanged. SQLite writes `-shm` for every reader, by design.
+- **With the writer closed** (no `-wal` or `-shm` on disk), SQLite creates both when a read-only connection opens the file. It leaves them behind after it closes: an empty `-wal`, and a 32 KiB `-shm`. The `.db` file is unchanged.
+- **So "creates nothing" holds for rollback-journal files**, which is what the framework's stores write. A WAL file gets its two side files, which is SQLite's behaviour, not the store's. The tests pin this.
+- **In a read-only directory with no `-shm`,** SQLite can't create it and fails with "attempt to write a readonly database". This comes through as the driver's error, with no shared message. If Desktop needs one, it's a new fixture case.
+
+**Review decision 9 (Redis scripts).**
+
+- **.NET** uses StackExchange.Redis's `ScriptEvaluateReadOnlyAsync`, which sends `EVALSHA_RO`, then `EVAL_RO`.
+- **Rust:** the `redis` crate has no read-only script call, so it sends `EVALSHA_RO` and falls back to `EVAL_RO` with the body on `NOSCRIPT`. It never needs `SCRIPT LOAD`.
+- **The flagged scripts** are `#!lua flags=no-writes\n` plus the existing ones. Writable stores keep the unflagged scripts with `EVAL`, because Redis before 7 can't parse the flag line.
+- **Redis 7 is detected** from `INFO server`. A server that refuses `INFO`, as a read-only ACL user does, is taken to be 7 or later, in both engines.
+- **The ACL user.** The tests prove that a user without write commands, `EVAL`, `EVALSHA` or `FCALL` can read through the store. Desktop's docs should list what such a user needs:
+  - `+@read`
+  - `+@transaction`, for the `MULTI`/`EXEC` that reads a list's last element and length
+  - `+time`, which the lease script calls
+  - `+eval_ro` and `+evalsha_ro`
+  - a key pattern for the prefix
+
+**Hot journal.** As designed. SQLite reports `SQLITE_READONLY_ROLLBACK` on the first read. The store maps it to the shared message at open and leaves the file and its journal untouched. A hot journal that appears after open surfaces as the driver's error.
+
+**Mutation checks.** All four were caught in both engines, though not all by the "nothing changes" test the blueprint names:
+
+- **Letting a Redis list index a missing thread:** caught by the Redis "nothing changes" test, and in Rust also by the gone-thread test.
+- **Taking the advisory lock in the Postgres check:** caught by the Postgres "nothing changes" test, which holds the DDL lock from another session while it opens the store. A `SELECT`-only role in a read-only transaction can still take an advisory lock, so a held lock is the only way to see it.
+- **Dropping `query_only`:** the read-only open mode alone keeps the file unchanged, so in .NET only the database-enforced test catches it. In Rust the "nothing changes" test catches it too, because it also writes a `TEMP` table, which only `query_only` stops.
+- **Running the version-table DDL in the SQLite check:** on a current file, `CREATE TABLE IF NOT EXISTS` writes nothing. The refusal tests for no log and version 0 catch it, because they get `SQLITE_READONLY` instead of the shared message.
+
+**Not run locally:** the Unix-only tests with a read-only file and directory, in .NET. They run in CI. The Rust ones passed in a Linux container.
 
 ---
 

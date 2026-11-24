@@ -305,6 +305,14 @@ their edges however they like.
   schema version 2 (see "Offloaded values"), in SQLite and in Postgres. Read
   by both runtimes' offload tests, after migrating a version-1 database, and
   the CLI's layout test.
+- `schema/fixtures/checkpoint-log/read-only-errors.json`
+  (`design/51-Read-Only-Store-Open.md`, "Errors") — not a record: the
+  messages a read-only checkpoint store gives when it refuses to open a store
+  (a missing SQLite file, no Strata log, version 0 or a newer version, a hot
+  journal, an unindexed Redis prefix, a missing blob directory) and when it
+  refuses a write. A read-only store reads `checkpoints` versions 1 to the
+  one it knows and changes nothing. Read by both runtimes' read-only store
+  tests and the CLI's.
 - `schema/fixtures/cross-engine/scenario.json` (STRATA-SPEC-005,
   "Conformance") — not a record: the cross-engine migration test. One engine
   writes a SQLite file and a Postgres schema at the `checkpoints` component's

@@ -1,9 +1,14 @@
-//! The CLI opens and seeds SQLite checkpoint logs through `strata-memory`'s
-//! `SqliteCheckpointStore` (`design/19-Async-Queryable-Store.md`), so a file it
-//! creates must have the shared layout (`schema/README.md`, "SQLite checkpoint
-//! log") — the `checkpoints` table and its `checkpoint_threads` head table —
-//! and rows it writes must match the shared row fixtures, exactly as
-//! `Datalium.Strata.Storage`'s `EfCoreCheckpointStore` is held to them.
+//! The CLI reads SQLite checkpoint logs through `strata-memory`'s
+//! `SqliteCheckpointStore` (`design/19-Async-Queryable-Store.md`), opened
+//! read-only (`design/51-Read-Only-Store-Open.md`); its tests write them
+//! through the same crate's writable store, as an application would. So a
+//! file that store creates must have the shared layout (`schema/README.md`,
+//! "SQLite checkpoint log") — the `checkpoints` table and its
+//! `checkpoint_threads` head table — and rows it writes must match the shared
+//! row fixtures, exactly as `Datalium.Strata.Storage`'s
+//! `EfCoreCheckpointStore` is held to them.
+
+mod common;
 
 use datalium_strata::schema::Checkpoint;
 
@@ -38,7 +43,7 @@ fn table_info(conn: &rusqlite::Connection, table: &str) -> serde_json::Value {
 async fn a_log_the_cli_creates_matches_the_shared_column_fixtures() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("checkpoints.sqlite");
-    drop(cli::store::open(path.to_str().unwrap()).await.unwrap());
+    common::create_sqlite(path.to_str().unwrap());
 
     let conn = rusqlite::Connection::open(&path).unwrap();
     let expected: serde_json::Value =
@@ -75,7 +80,7 @@ async fn a_log_the_cli_creates_matches_the_shared_column_fixtures() {
 async fn a_log_a_newer_runtime_has_moved_on_is_refused_and_left_alone() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("checkpoints.sqlite");
-    drop(cli::store::open(path.to_str().unwrap()).await.unwrap());
+    common::create_sqlite(path.to_str().unwrap());
     let conn = rusqlite::Connection::open(&path).unwrap();
     conn.execute(
         "UPDATE strata_schema_version SET version = 7 WHERE component = 'checkpoints'",
@@ -90,10 +95,12 @@ async fn a_log_a_newer_runtime_has_moved_on_is_refused_and_left_alone() {
         .unwrap();
 
     assert!(!output.status.success());
+    let known = datalium_strata_memory::schema_versions::CHECKPOINTS_VERSION.to_string();
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains(
-            "database is at checkpoints schema version 7, and this build knows 2: upgrade the runtime"
-        ),
+        String::from_utf8_lossy(&output.stderr).contains(&common::open_error(
+            "newer_version",
+            &[("found", "7"), ("known", &known)]
+        )),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -111,7 +118,7 @@ async fn a_log_a_newer_runtime_has_moved_on_is_refused_and_left_alone() {
 async fn row_after_insert(checkpoint: &Checkpoint) -> serde_json::Value {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("checkpoints.sqlite");
-    let storage = cli::store::open(path.to_str().unwrap()).await.unwrap();
+    let storage = common::seed(path.to_str().unwrap()).await;
     storage.insert(checkpoint).await.unwrap();
     drop(storage);
 
@@ -255,7 +262,7 @@ async fn cli_row_for_a_checkpoint_with_a_decision_holds_it_as_json_in_the_decisi
 async fn the_cli_reads_a_log_stored_as_deltas() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("checkpoints.sqlite");
-    drop(cli::store::open(path.to_str().unwrap()).await.unwrap());
+    common::create_sqlite(path.to_str().unwrap());
     let shared: serde_json::Value =
         serde_json::from_str(&fixture("checkpoint-log", "delta.rows.json")).unwrap();
     let thread_id = shared["thread_id"].as_str().unwrap();
@@ -371,7 +378,7 @@ async fn the_cli_reads_a_log_with_offloaded_values() {
     let dir = tempfile::tempdir().unwrap();
 
     let own = dir.path().join("own.sqlite");
-    drop(cli::store::open(own.to_str().unwrap()).await.unwrap());
+    common::create_sqlite(own.to_str().unwrap());
     insert_rows(&own, thread_id, rows);
     let conn = rusqlite::Connection::open(&own).unwrap();
     for (hash, content) in blobs {
@@ -384,7 +391,7 @@ async fn the_cli_reads_a_log_with_offloaded_values() {
     drop(conn);
 
     let elsewhere = dir.path().join("elsewhere.sqlite");
-    drop(cli::store::open(elsewhere.to_str().unwrap()).await.unwrap());
+    common::create_sqlite(elsewhere.to_str().unwrap());
     insert_rows(&elsewhere, thread_id, rows);
     // The filesystem layout: <root>/<thread id as hex>/<hash's hex digest>.
     let thread_dir = dir.path().join("blobs").join(

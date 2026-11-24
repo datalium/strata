@@ -6,6 +6,7 @@ pub mod memory;
 pub mod offload;
 pub mod postgres_memory;
 pub mod postgres_store;
+mod read_only;
 pub mod redis_memory;
 pub mod redis_store;
 pub mod retry;

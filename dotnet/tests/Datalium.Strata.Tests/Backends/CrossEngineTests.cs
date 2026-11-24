@@ -447,6 +447,15 @@ public sealed class CrossEngineTests
         Assert.Equal((version, false), await database.LayoutAsync());
     }
 
+    /// <summary>For the read-only store tests (<c>design/51-Read-Only-Store-Open.md</c>): <see cref="WriteOlderAsync"/> into a SQLite file.</summary>
+    internal static Task WriteOlderSqliteAsync(string path) => WriteOlderAsync(new SqliteDatabase(path));
+
+    /// <summary>For the read-only store tests: <see cref="WriteOlderAsync"/> into a Postgres schema, made anew.</summary>
+    internal static Task WriteOlderPostgresAsync(string url, string schema) => WriteOlderAsync(new PostgresDatabase(url, schema));
+
+    /// <summary>For the read-only store tests: what <see cref="WriteOlderAsync"/> writes, as (thread id, checkpoint).</summary>
+    internal static List<(string ThreadId, JsonNode Checkpoint)> OlderCheckpoints() => Lifecycle();
+
     private static List<string> WrittenVersions =>
         [.. Scenario["current"]!["written"]!.AsArray().Select(row => row!["schema_version"]!.GetValue<string>())];
 
