@@ -24,6 +24,7 @@ using OpenTelemetry.Trace;
 
 namespace Datalium.Strata.DocsSnippets.Guides.Production.Hosting;
 
+[Collection(TelemetryExporters.Name)]
 public class HostingSamples
 {
     [Fact]
