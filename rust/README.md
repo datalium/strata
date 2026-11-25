@@ -2,15 +2,13 @@
 
 A type-safe, compiled framework for orchestrating AI agents as state graphs, for Rust and .NET.
 
-**This is a preview.** The API can still change between versions; the changelog says what did.
+**Strata is in public preview until 1.0.** The API can still change between versions; the changelog says what did.
 
 ## Install
 
 ```bash
-cargo add datalium-strata@0.9.0-preview.3 datalium-strata-memory@0.9.0-preview.3
+cargo add datalium-strata@0.9.0 datalium-strata-memory@0.9.0
 ```
-
-A preview version is only picked when you name it.
 
 | Crate | What it is |
 |---|---|

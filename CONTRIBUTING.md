@@ -2,7 +2,7 @@
 
 Thanks for helping. This page covers how to build and test Strata, the rules every change follows, and how to send a pull request.
 
-Strata is a preview (see the [README](README.md#why-strata-is-a-preview)). The API can still change, so for anything bigger than a bug fix, open an issue or a [discussion](https://github.com/datalium/strata/discussions) first. That way we can agree on the design before you write the code.
+Strata is in public preview until 1.0 (see the [README](README.md#what-090-means)). The API can still change, so for anything bigger than a bug fix, open an issue or a [discussion](https://github.com/datalium/strata/discussions) first. That way we can agree on the design before you write the code.
 
 ## What you need
 
