@@ -2,14 +2,14 @@
 
 ## Supported versions
 
-Strata is a preview. Only the latest preview gets security fixes.
+Security fixes go to the latest release.
 
 | Version | Supported |
 |---|---|
-| Latest `0.9.0-preview.N` | Yes |
-| Any earlier preview | No. Upgrade to the latest |
+| Latest `0.9.x` | Yes |
+| Any `0.9.0-preview.N` | No. Upgrade to the latest release |
 
-A fix ships as a new preview version on nuget.org, on crates.io and as a GitHub release. The [changelog](CHANGELOG.md) says what it fixes.
+A fix ships as a new patch version on nuget.org, on crates.io and as a GitHub release. The [changelog](CHANGELOG.md) says what it fixes.
 
 ## Reporting a vulnerability
 

@@ -2,7 +2,7 @@
 
 Thanks for helping. This page covers how to build and test Strata, the rules every change follows, and how to send a pull request.
 
-Strata is in public preview until 1.0 (see the [README](README.md#what-090-means)). The API can still change, so for anything bigger than a bug fix, open an issue or a [discussion](https://github.com/datalium/strata/discussions) first. That way we can agree on the design before you write the code.
+Strata `0.9.0` is a stable release (see the [README](README.md#what-090-means)). No release removes or breaks a public API: one we replace is marked deprecated first, and removed only in a later major version. A public API is hard to take back once it ships, so for anything bigger than a bug fix, open an issue or a [discussion](https://github.com/datalium/strata/discussions) first. That way we can agree on the design before you write the code.
 
 ## What you need
 

@@ -16,6 +16,7 @@ using Datalium.Strata.Streaming;
 
 namespace Datalium.Strata.DocsSnippets.Guides.Production.Observability;
 
+[Collection(TelemetryExporters.Name)]
 public class ObservabilitySamples
 {
     [Fact]
