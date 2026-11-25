@@ -416,6 +416,35 @@ async fn register_mcp_registers_all_or_nothing() {
     assert_eq!(registry.names().collect::<Vec<_>>(), ["slow"]);
 }
 
+/// 0.9.0's API keeps `StrataTool::name()` a `&'static str`: an MCP tool's
+/// name outlives its registry and its client, and connecting again reuses
+/// the same names instead of leaking new ones (`design/50-MCP-Client.md`,
+/// "Tool names in Rust").
+#[tokio::test]
+async fn mcp_tool_names_are_static_and_a_reconnect_reuses_them() {
+    async fn names_of_a_fresh_connection() -> Vec<&'static str> {
+        let script = Script::new(Era::Modern);
+        let client = connect(&script).await;
+        let mut registry = ToolRegistry::new();
+        registry
+            .register_mcp(
+                client
+                    .tool_set(McpToolOptions::new().prefix("static."))
+                    .unwrap(),
+            )
+            .unwrap();
+        let names: Vec<&'static str> = registry.names().collect();
+        client.close().await;
+        names
+    }
+
+    let first = names_of_a_fresh_connection().await;
+    let again = names_of_a_fresh_connection().await;
+    assert!(first.contains(&"static.echo"));
+    assert_eq!(first, again);
+    assert!(first.iter().zip(&again).all(|(a, b)| std::ptr::eq(*a, *b)));
+}
+
 // --- Results and errors -----------------------------------------------------
 
 fn registry(client: &McpClient) -> ToolRegistry {

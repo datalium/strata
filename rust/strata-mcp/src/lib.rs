@@ -47,6 +47,7 @@ mod error;
 mod headers;
 mod jsonrpc;
 mod link;
+mod names;
 mod options;
 mod protocol;
 mod result;

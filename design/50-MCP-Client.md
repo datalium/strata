@@ -32,7 +32,7 @@ It was written as a blueprint before implementation. "Review decisions" lists th
 | Telemetry | One client span per MCP request (`tools/call <tool>`, `tools/list`, `server/discover`, `initialize`), with the OpenTelemetry MCP attributes, a child of the `strata.tool` span for calls. One histogram, `mcp.client.operation.duration`. Review question 2. |
 | Trace context to the server | `traceparent` / `tracestate` in each request's `_meta`. .NET from `Activity.Current`. Rust from a hook, since the Rust engine has no OpenTelemetry context of its own. Review question 3. |
 | Lifetime | Explicit. .NET `await using`; Rust `close().await`, and a forced stop when the last handle is dropped. A stdio server that exits is started again on the next call. Review question 4. |
-| Engine change | Rust only: `StrataTool::name()` returns `&str` instead of `&'static str`, so a name learned at run time fits. Approved 2026-11-22. See "The engine change". |
+| Engine change | **None.** Rust's `StrataTool::name()` stays `&'static str`, as 0.9.0's API promise requires. `datalium-strata-mcp` interns each tool name it learns, leaking each distinct name once. See "Tool names in Rust". |
 | Wire format | **No change.** Nothing MCP is written to a checkpoint, a graph definition or a history record. |
 | Not built | Strata as an MCP server; resources, prompts, completion; sampling, roots, elicitation (and so MRTR input); subscriptions and list-changed notifications; the tasks extension; progress; full OAuth 2.1; the HTTP+SSE transport; validation of `structuredContent` against `outputSchema`; settings-based registration in `AddStrata()`. |
 
@@ -420,23 +420,16 @@ Review question 3.
 
 ---
 
-## The engine change (Rust)
+## Tool names in Rust
 
-```rust
-pub trait StrataTool: Send + Sync {
-    fn name(&self) -> &str;                       // was &'static str
-    fn schema(&self) -> serde_json::Value;
-    // execute, execute_with: unchanged
-}
-```
+Rust's `StrataTool::name()` returns `&'static str`, and `ToolRegistry` keys on it. An MCP tool's name is known only once the server has been listed, so `datalium-strata-mcp` makes it `'static` itself:
 
-- **Why:** an MCP tool's name is known only once the server has been listed. The alternative, leaking each name with `Box::leak`, would leak memory on every connection and restart.
-- **`ToolRegistry`** keys its index and its excluded names on `Arc<str>` instead of `&'static str`, and `names()` yields `&str`.
-- **Source-compatible for implementors:** a tool that returns a `&'static str`, including everything `#[strata_tool]` generates, still compiles, since a longer lifetime satisfies the trait. This was checked with `rustc -D warnings`.
-- **Breaking for one kind of caller:** code that kept a name from `names()` past the registry's lifetime. Nothing in `datalium/strata`, the demos or StrataOps does.
+- **Each distinct name is leaked once** (`names.rs`). The first tool set with the name `github.create_issue` leaks it. Every later one, from a reconnect, a restarted server or a second client, gets the same `&'static str` from a process-wide set.
+- **What it holds is bounded by the names, not the connections.** It's one string per distinct prefixed name the process ever sees, usually a few hundred bytes per server. A server whose tool names change on every listing would grow it with each new name. That belongs on the Known limitations page, with STR-92's docs.
+- **The engine doesn't change**, so 0.9.0's promise holds: no public API changes, and `names()` still yields `&'static str`.
 - **.NET needs nothing:** its names were always `string`s.
 
-`design/20-Tool-Dispatch-And-Registry.md` gets a note pointing here.
+**Why not change the trait:** the first build (2026-11-22) changed `name()` to `&str` and keyed the registry on `Arc<str>`. Implementors still compiled, but callers lost the `'static`: code that kept a name from `names()` after its registry was gone stopped compiling. From `0.9.0`, no release breaks a public API (`design/36`), so that change was replaced with interning on 2026-11-25, before it merged. A later major version can still make it.
 
 ---
 
@@ -478,8 +471,7 @@ pub trait StrataTool: Send + Sync {
 
 - **.NET:** nothing changes for existing code. The package is new, and the only engine-adjacent change is the source name `AddStrata()` registers.
 - **Rust:**
-  - `StrataTool` implementations compile unchanged.
-  - Code that stored a name from `ToolRegistry::names()` as `&'static str` must copy it (`to_owned()`).
+  - Nothing in the engine changes: `StrataTool` and `ToolRegistry` are as they were.
   - `ToolCallFailed`'s meaning widens (doc only).
 - **Downstream:** demos and StrataOps compile unchanged. StrataOps could later use an MCP server's tools, but that is a separate decision, after 0.9.0.
 
@@ -505,7 +497,7 @@ pub trait StrataTool: Send + Sync {
 - **Windows:** a `.cmd` command found through `PATHEXT` and run through `cmd.exe`.
 - **Authorization:** the token hook called on each request, a token that changes, a hook that fails, and no token in any error or span.
 - **Telemetry:** span names, kinds, parents and attributes per outcome; the metric; `traceparent` in `_meta` (.NET from `Activity`, Rust from the hook).
-- **Rust engine change:** a tool with a `String` name registered and dispatched, and every existing tool test unchanged.
+- **Rust tool names:** a name interned twice is the same `&'static str` and leaks nothing more. A registry's names outlive the registry and the client, and a reconnect gets the same pointers.
 
 **Mutation checks**, as for design/20 and 23. Each of these should fail a test in both engines:
 - falling back to `initialize` on a recognized modern error;
@@ -536,10 +528,11 @@ Reviewed 2026-11-22: every recommendation (in bold) was accepted, and the build 
 
 ## Implementation Status
 
-Built 2026-11-22 in both engines, in one change, as specified above: STR-151 (`Datalium.Strata.Mcp`) and STR-152 (`datalium-strata-mcp`, with the `name()` change). It merges after `v0.9.0` is tagged (2026-11-25), so the release doesn't carry it. These are the differences and details.
+Built 2026-11-22 in both engines, in one change, as specified above: STR-151 (`Datalium.Strata.Mcp`) and STR-152 (`datalium-strata-mcp`). It merges after `v0.9.0` is tagged (2026-11-25), so the release doesn't carry it. These are the differences and details.
 
 **Where it diverged, and why:**
 
+- **The Rust engine doesn't change.** The first build changed `StrataTool::name()` to `&str`. After `0.9.0`'s API promise, the crate interns names instead and the engine is as it was (see "Tool names in Rust").
 - **.NET reads SSE with a parser of its own, not `SseParser`.** The shared fixture caught two departures from the WHATWG rules in .NET's `SseParser`: after an event with no data it keeps that event's type for the next one, and it doesn't carry the last event id over to later events. `sse.json` is right, so .NET parses as Rust does (`McpSse.cs`), and the package has no `System.Net.ServerSentEvents` dependency.
 - **Neither engine's own HTTP client follows redirects.** The blueprint said "not to another origin". Following none is simpler and the same in both (.NET `AllowAutoRedirect = false`, Rust `redirect::Policy::none()`). An `HttpClient` / `reqwest::Client` passed in keeps its own policy.
 - **Windows batch files are quoted as Rust's standard library quotes them.** Rust runs a `.cmd` / `.bat` found through `PATHEXT` with `std::process::Command`, which already runs it through `cmd.exe` with audited quoting and refuses an argument it can't quote safely. .NET writes the same command line itself (`/e:ON /v:OFF /d /c`, `%` as `%%cd:~,%`), takes `cmd.exe` from `ComSpec`, and refuses an argument with a line break or a NUL. Both are tested with an argument holding `a b & c`.
@@ -569,7 +562,7 @@ Built 2026-11-22 in both engines, in one change, as specified above: STR-151 (`D
 **Tests:**
 - The five shared fixtures, in both engines.
 - An in-memory scripted server, a stdio fixture server and a loopback HTTP server in both eras. .NET: `dotnet/tests/Datalium.Strata.McpFixtureServer` and Kestrel. Rust: the `mcp_fixture_server` example and a raw socket. The stdio fixture starts a child of its own for the process-tree tests.
-- .NET has 197 MCP tests. Rust has 65: `mcp_streams`, `mcp_stdio`, `mcp_http`, `mcp_agent`, `mcp_telemetry`, and unit tests.
+- .NET has 197 MCP tests. Rust has 67: `mcp_streams`, `mcp_stdio`, `mcp_http`, `mcp_agent`, `mcp_telemetry`, and unit tests.
 - `PackageSmoke` calls an MCP tool through the packages alone.
 - Each of the six mutation checks fails tests in both engines.
 

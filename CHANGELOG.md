@@ -27,6 +27,20 @@ Each entry ends with the wire formats that version writes and reads. The rules b
   - A Redis prefix that no current runtime has indexed is refused, not indexed.
   - A `--blobs` directory that doesn't exist is refused.
 - **The cross-engine test** has a new step: the CLI reads both engines' version 1 databases read-only before any engine migrates them, and finds them unchanged.
+- **An MCP client in both engines** (STR-92, `design/50-MCP-Client.md`): an MCP server's tools become Strata tools in a `ToolRegistry`. Strata implements the protocol itself and depends on no MCP SDK.
+  - **New packages:** `Datalium.Strata.Mcp` (NuGet) and `datalium-strata-mcp` (crates.io). Reference them only if you use MCP servers. `Datalium.Strata.Hosting` doesn't bring them.
+  - **.NET:** `McpClient.ConnectAsync(McpServer.Stdio(…) | McpServer.Http(…))`, then `client.ToolProvider(new() { Include = …, Prefix = … })` passed to `ToolRegistry.Register`.
+  - **Rust:** `McpClient::connect(McpServer::stdio(…) | McpServer::http(…))`, then `client.tool_set(McpToolOptions::new()…)` passed to `register_mcp` (the `McpRegistryExt` trait).
+  - **What it supports:**
+    - Transports: stdio and Streamable HTTP. Rust's are the default Cargo features `stdio` and `http`.
+    - Protocol versions: the stateless `2026-07-28`, and the `initialize` versions back to `2025-03-26` (and `2024-11-05` on stdio). The version is found per connection with `server/discover`.
+    - Tools only: `tools/list` and `tools/call`. Each server's tools can be filtered (`Include`) and prefixed (`Prefix`). Subsets, middleware, the `strata.tool` span and the run events apply to them unchanged.
+    - Authorization: a token hook called before each request, not full OAuth.
+  - **Errors:** a tool's own error (`isError`) reaches the model as `{"error": "…"}`, and the node goes on. A protocol or transport failure fails the call: `McpException` in .NET, `StrataError::ToolCallFailed` in Rust. Rust's `mcp_fault_classifier` marks the transient ones as transient for an agent.
+  - **Telemetry:** an `mcp.request` client span per request, with the OpenTelemetry MCP attributes, and the `mcp.client.operation.duration` histogram. `StrataInstrumentation.ActivitySourceNames` and `MeterNames` now include `Datalium.Strata.Mcp`.
+  - **No engine API changes.** Rust's `StrataTool::name()` stays `&'static str`. The crate interns each tool name it learns, once per distinct name, so reconnecting doesn't leak more. In Rust, `StrataError::ToolCallFailed`'s doc now also covers a tool that knows why it failed.
+  - **Not built:** Strata as an MCP server, resources, prompts, sampling, roots, elicitation, subscriptions, progress, the tasks extension, full OAuth 2.1, and the old HTTP+SSE transport.
+  - **New shared test fixtures** in `schema/fixtures/mcp/`. These are tests both engines pass, not formats Strata writes.
 
 ### Wire formats
 

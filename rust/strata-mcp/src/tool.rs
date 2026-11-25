@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 
 use crate::McpError;
 use crate::client::{Inner, McpClient};
+use crate::names;
 
 /// A tool as the server listed it. `annotations` (and the rest) are
 /// untrusted: a server says what it likes about its tools.
@@ -100,7 +101,7 @@ pub struct McpToolSet {
 impl McpToolSet {
     /// The Strata names, prefix included, in the server's order.
     pub fn names(&self) -> impl Iterator<Item = &str> + '_ {
-        self.tools.iter().map(|tool| tool.name.as_str())
+        self.tools.iter().map(|tool| tool.name)
     }
 
     pub fn len(&self) -> usize {
@@ -148,9 +149,9 @@ impl McpClient {
                     .is_none_or(|include| include.contains(&tool.name))
             })
             .map(|tool| {
-                let name = format!("{prefix}{}", tool.name);
+                let name = names::intern(&format!("{prefix}{}", tool.name));
                 McpToolHandle {
-                    schema: tool.schema(&name),
+                    schema: tool.schema(name),
                     name,
                     server_name: tool.name.clone(),
                     inner: self.inner().clone(),
@@ -161,17 +162,18 @@ impl McpClient {
     }
 }
 
-/// One MCP tool as a Strata tool.
+/// One MCP tool as a Strata tool. Its name is interned
+/// (`crate::names`), since `StrataTool::name()` is a `&'static str`.
 struct McpToolHandle {
-    name: String,
+    name: &'static str,
     server_name: String,
     schema: Value,
     inner: Arc<Inner>,
 }
 
 impl StrataTool for McpToolHandle {
-    fn name(&self) -> &str {
-        &self.name
+    fn name(&self) -> &'static str {
+        self.name
     }
 
     fn schema(&self) -> Value {
@@ -195,9 +197,9 @@ impl StrataTool for McpToolHandle {
                 .await
             {
                 Ok(result) => Ok(result.tool_text()),
-                Err(McpError::Cancelled) => Err(StrataError::ToolCancelled(self.name.clone())),
+                Err(McpError::Cancelled) => Err(StrataError::ToolCancelled(self.name.to_string())),
                 Err(error) => Err(StrataError::ToolCallFailed {
-                    tool: self.name.clone(),
+                    tool: self.name.to_string(),
                     message: error.to_string(),
                 }),
             }
