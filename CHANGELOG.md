@@ -2,13 +2,13 @@
 
 What changed in each version of Datalium Strata, newest first, written for someone upgrading.
 
-Every NuGet package, every crate and the `strata` CLI share one version and are released together (`design/36-Packaging-And-Versioning.md`). Versions follow semantic versioning. While the version is `0.x`, a minor version may break the API, and this file says what; a patch version doesn't. A preview (`-preview.N`) promises nothing between previews.
+Every NuGet package, every crate and the `strata` CLI share one version and are released together (`design/36-Packaging-And-Versioning.md`). Versions follow semantic versioning. From `0.9.0`, no release removes or breaks a public API. An API we replace is marked deprecated first, with what to use instead, and is removed only in a later major version. This file says what each version adds and deprecates. Before `0.9.0`, a minor version could break the API, and a preview (`-preview.N`) promised nothing between previews.
 
 Each entry ends with the wire formats that version writes and reads. The rules behind them are in `design/Arch-Specs/STRATA-SPEC-005.md`, and the formats in `schema/README.md`.
 
 ## 0.9.0 (2026-11-25)
 
-The first version without a preview label. The three things it waited for are done in both engines: the wire formats are a normative spec, STRATA-SPEC-005, with a cross-engine migration test; StrataOps, an application built on Strata (not public yet), has finished its load report; and StrataOps builds from the published packages. **No version from `0.9.0` until `1.0.0-rc.1` changes a wire format.** The engines' code is the same as in `0.9.0-preview.3`: what changed is the spec, tests and the docs' code samples.
+The first stable release. The three things it waited for are done in both engines: the wire formats are a normative spec, STRATA-SPEC-005, with a cross-engine migration test; StrataOps, an application built on Strata (not public yet), has finished its load report; and StrataOps builds from the published packages. **No version from `0.9.0` until `1.0.0-rc.1` changes a wire format.** The engines' code is the same as in `0.9.0-preview.3`: what changed is the spec, tests and the docs' code samples.
 
 ### Upgrading
 
@@ -22,6 +22,7 @@ From `0.9.0-preview.2` or earlier, also read `0.9.0-preview.3`'s "Upgrading" bel
 
 ### Changes
 
+- **The API policy.** From `0.9.0`, no release removes or breaks a public API. An API we replace is marked deprecated first, with what to use instead, and is removed only in a later major version. Until now, a `0.x` minor version could break the API, and a preview promised nothing between previews.
 - **The wire formats are now a normative spec, STRATA-SPEC-005** (`design/Arch-Specs/STRATA-SPEC-005.md`). It covers the checkpoint, graph definition, history record and memory record formats. It sets out the versioning rules, which encodings a store must accept (a store with its own API, such as Strata Cloud's, may refuse the store-only `1.8.0` and `1.9.0`), and the database schema versions. It also states the upgrade order (every reader before any writer) and what proves an implementation conforms. **From `0.9.0` until `1.0.0-rc.1` no version changes a wire format.** `schema/README.md` links to it, and it now lists the memory record and the `memory` database component.
 - **A cross-engine migration test.** Each engine writes a SQLite file and a Postgres schema at the `checkpoints` component's version 1, holding a checkpoint at every version from `1.0.0` to `1.7.0`. It also writes another at the current version from a store with deltas and offload. The other engine's current stores migrate them, read every checkpoint and resume threads to the end, and the CLI then reads what .NET wrote (`schema/fixtures/cross-engine/scenario.json`, `.github/workflows/cross-engine-ci.yml`). Run on its own, each engine reads what it wrote, so the test also runs in the two existing workflows. Nothing an application sees changes.
 - **The code samples on stratamesh.dev are tests in this repository** (`examples/docs-snippets/`). Each C# and Rust sample is a region inside a test that CI compiles and runs, and the docs copy the regions from the release tag, so a sample can't drift from the API it shows. Nothing an application sees changes.
