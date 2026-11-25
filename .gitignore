@@ -4,6 +4,7 @@ target/
 Cargo.lock
 !/cli/Cargo.lock
 !/examples/rust-agent/Cargo.lock
+!/examples/docs-snippets/rust/Cargo.lock
 
 # .NET / C#
 bin/
