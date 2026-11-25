@@ -2,15 +2,13 @@
 
 A type-safe, compiled framework for orchestrating AI agents as state graphs, for .NET and Rust.
 
-**This is a preview.** The API can still change between versions; the changelog says what did.
+**Strata is in public preview until 1.0.** The API can still change between versions; the changelog says what did.
 
 ## Install
 
 ```bash
-dotnet add package Datalium.Strata.Hosting --version 0.9.0-preview.3
+dotnet add package Datalium.Strata.Hosting --version 0.9.0
 ```
-
-A preview version is only picked when you name it (or pass `--prerelease`).
 
 | Package | What it is |
 |---|---|
