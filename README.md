@@ -1,13 +1,13 @@
 # Datalium Strata
 
-[![Public Preview](https://img.shields.io/badge/status-public%20preview-orange)](#what-090-means)
-[![NuGet](https://img.shields.io/nuget/vpre/Datalium.Strata?label=nuget)](https://www.nuget.org/packages/Datalium.Strata.Hosting)
+[![Stable](https://img.shields.io/badge/status-stable-brightgreen)](#what-090-means)
+[![NuGet](https://img.shields.io/nuget/v/Datalium.Strata?label=nuget)](https://www.nuget.org/packages/Datalium.Strata.Hosting)
 [![crates.io](https://img.shields.io/crates/v/datalium-strata?label=crates.io)](https://crates.io/crates/datalium-strata)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 
 Datalium Strata is a type-safe, compiled, open-source, high-performance, and native agentic AI orchestration framework targeting the Rust and .NET/C# ecosystems, built for high-concurrency production workloads.
 
-Strata is in **public preview** until 1.0. The current version is `0.9.0`, the first without a preview label. Read [What 0.9.0 means](#what-090-means) and the [Known limitations](https://stratamesh.dev/reference/known-limitations/) before you build on it.
+The current version is `0.9.0`, the first **stable release**. Read [What 0.9.0 means](#what-090-means) and the [Known limitations](https://stratamesh.dev/reference/known-limitations/) before you build on it.
 
 **Documentation:** [stratamesh.dev](https://stratamesh.dev) · **Quickstart:** [stratamesh.dev/start-here/quickstart](https://stratamesh.dev/start-here/quickstart/)
 
@@ -124,15 +124,19 @@ Most run without an API key. The ones that need a model say so at the top of the
 
 ## What 0.9.0 means
 
-`0.9.0` is the first version without a preview label. The three things it waited for are done, at one commit, in both engines:
+`0.9.0` is the first stable release. The three things it waited for are done, at one commit, in both engines:
 
 - **The wire formats are a normative spec,** [STRATA-SPEC-005](design/Arch-Specs/STRATA-SPEC-005.md). It covers checkpoints, graph definitions, history records and memory records. A cross-engine test checks that each engine migrates, reads and resumes what the other wrote, at every checkpoint version.
 - **A load report from a real application.** Strata was built alongside StrataOps, an autonomous SRE system built on Strata (not public yet). Its storm report, a large-scale load test run against a simulator, is finished.
 - **StrataOps builds from the published packages**, not from source.
 
-From `0.9.0` until `1.0.0-rc.1`, no version changes a wire format. `1.0.0-rc.1` adds a review of the public API in both engines, with checks that catch breaking changes, and a written stability promise, deprecation policy and support statement. 1.0 adds outside teams running Strata in production, and a checkpoint schema that stays stable through a release.
+**The API:** from `0.9.0`, no release removes or breaks a public API. An API we replace is marked deprecated first, with what to use instead, and is removed only in a later major version. The [changelog](CHANGELOG.md) says what each version adds and deprecates.
 
-Until 1.0, the API can change: while the version is `0.x`, a minor version may break it. The [changelog](CHANGELOG.md) says what changed in each version. The [Known limitations](https://stratamesh.dev/reference/known-limitations/) page lists what isn't built yet, and what to do in the meantime.
+**The wire formats:** from `0.9.0` until `1.0.0-rc.1`, no version changes one.
+
+`1.0.0-rc.1` adds a review of the public API in both engines, with checks in CI that catch a breaking change, and a support statement. 1.0 adds outside teams running Strata in production, and a checkpoint schema that has stayed stable through a release.
+
+The [Known limitations](https://stratamesh.dev/reference/known-limitations/) page lists what isn't built yet, and what to do in the meantime.
 
 ## Repository layout
 

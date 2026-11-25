@@ -2,7 +2,7 @@
 
 A type-safe, compiled framework for orchestrating AI agents as state graphs, for Rust and .NET.
 
-**Strata is in public preview until 1.0.** The API can still change between versions; the changelog says what did.
+**Strata `0.9.0` is a stable release.** No release removes or breaks a public API: one we replace is marked deprecated first, with what to use instead, and removed only in a later major version. The changelog says what each version adds and deprecates.
 
 ## Install
 
