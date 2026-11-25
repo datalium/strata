@@ -2,10 +2,11 @@ name: Cross-Engine CI
 
 # The cross-engine migration test (design/Arch-Specs/STRATA-SPEC-005.md, "Conformance";
 # schema/fixtures/cross-engine/scenario.json). Each engine writes a SQLite file and a Postgres schema at the
-# checkpoints component's schema version 1, and another at the current version with deltas and offload; then
-# each opens the other's with its current stores, migrates, reads every checkpoint and resumes threads to the
-# end, and the CLI reads what the .NET engine wrote. The same tests run on their own, each engine reading what it
-# wrote, in rust-ci.yml and dotnet-ci.yml.
+# checkpoints component's schema version 1, and another at the current version with deltas and offload; the CLI
+# reads both engines' version 1 databases read-only, before any engine migrates them; then each engine opens the
+# other's with its current stores, migrates, reads every checkpoint and resumes threads to the end, and the CLI
+# reads what the .NET engine wrote. The same tests run on their own, each engine reading what it wrote, in
+# rust-ci.yml and dotnet-ci.yml.
 
 on:
     workflow_dispatch:
@@ -70,6 +71,14 @@ jobs:
               run: >-
                   dotnet test dotnet/tests/Datalium.Strata.Tests --configuration Release --no-build
                   --filter "FullyQualifiedName~Datalium.Strata.Tests.Backends.CrossEngineTests"
+
+            # The CLI opens every store read-only (design/51-Read-Only-Store-Open.md), so it reads both engines'
+            # version 1 databases as they were written and leaves them, unmigrated, for the steps below.
+            - name: The CLI Reads Both Engines' Version 1 Databases Before Any Engine Migrates Them
+              working-directory: cli
+              env:
+                  STRATA_INTEROP_STEP: read-older
+              run: cargo test --test cross_engine
 
             - name: Rust Reads, Migrates and Resumes What .NET Wrote
               working-directory: rust

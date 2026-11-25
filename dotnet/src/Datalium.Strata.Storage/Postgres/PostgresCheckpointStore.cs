@@ -196,12 +196,20 @@ public sealed class PostgresCheckpointStore : ICheckpointStore, ICheckpointQuery
     private readonly bool _ownsDataSource;
     private readonly PostgresStoreOptions _options;
     private readonly StoreRetrier _retry;
-    private readonly PostgresPreparation _preparation;
+
+    /// <summary>The store's preparation; <see langword="null"/> for a read-only store, which never prepares anything.</summary>
+    private readonly PostgresPreparation? _preparation;
     private readonly GroupCommitQueue? _group;
     private readonly CheckpointWriter? _writer;
 
     /// <summary>Where offloaded values go when not in this database.</summary>
     private readonly ICheckpointBlobStore? _blobs;
+
+    /// <summary>Whether the store was opened read-only (<see cref="OpenReadOnlyAsync"/>).</summary>
+    private readonly bool _readOnly;
+
+    /// <summary>The <c>checkpoints</c> component's version a read-only store found when it was opened.</summary>
+    private long _readOnlyVersion;
 
     /// <summary>
     /// A store over <paramref name="connectionString"/> (an Npgsql connection string or a <c>postgres://</c>
@@ -216,12 +224,25 @@ public sealed class PostgresCheckpointStore : ICheckpointStore, ICheckpointQuery
     /// <param name="options">Retries and migration; the defaults when <see langword="null"/>.</param>
     /// <param name="ownsDataSource">Whether <see cref="Dispose"/> should dispose <paramref name="dataSource"/>.</param>
     public PostgresCheckpointStore(NpgsqlDataSource dataSource, PostgresStoreOptions? options = null, bool ownsDataSource = false)
+        : this(dataSource, options, ownsDataSource, readOnly: false)
+    {
+    }
+
+    /// <summary>A store over <paramref name="dataSource"/>; a <paramref name="readOnly"/> one prepares nothing and writes nothing.</summary>
+    private PostgresCheckpointStore(NpgsqlDataSource dataSource, PostgresStoreOptions? options, bool ownsDataSource, bool readOnly)
     {
         ArgumentNullException.ThrowIfNull(dataSource);
         _dataSource = dataSource;
         _ownsDataSource = ownsDataSource;
         _options = options ?? new PostgresStoreOptions();
         _retry = new StoreRetrier(_options.Retry, _options.TimeProvider, "postgres", PostgresFaults.IsTransient);
+        _blobs = _options.Offload?.Blobs;
+        _readOnly = readOnly;
+        if (readOnly)
+        {
+            return;
+        }
+
         _preparation = new PostgresPreparation(
             _dataSource,
             _options,
@@ -236,7 +257,6 @@ public sealed class PostgresCheckpointStore : ICheckpointStore, ICheckpointQuery
         }
 
         _writer = CheckpointWriter.For(_options.Deltas, _options.Offload);
-        _blobs = _options.Offload?.Blobs;
     }
 
     /// <summary>
@@ -265,11 +285,116 @@ public sealed class PostgresCheckpointStore : ICheckpointStore, ICheckpointQuery
     /// "Migrations"). Safe to call at any time, from any number of processes at once.
     /// </summary>
     /// <exception cref="InvalidOperationException">The database is newer than this build.</exception>
-    public async Task MigrateAsync(CancellationToken cancellationToken = default) =>
-        await _preparation.EnsureAsync(migrate: true, cancellationToken).ConfigureAwait(false);
+    public async Task MigrateAsync(CancellationToken cancellationToken = default)
+    {
+        Writable(ReadOnlyStores.Migrate);
+        await _preparation!.EnsureAsync(migrate: true, cancellationToken).ConfigureAwait(false);
+    }
 
+    /// <summary>A read-only store is ready once open: it never prepares anything.</summary>
     private ValueTask ReadyAsync(CancellationToken cancellationToken) =>
-        _preparation.EnsureAsync(migrate: false, cancellationToken);
+        _preparation?.EnsureAsync(migrate: false, cancellationToken) ?? ValueTask.CompletedTask;
+
+    /// <summary>
+    /// The session setting every connection of a read-only store opens with: each transaction is read-only, so the
+    /// server refuses a write, and a standby or a role that can only <c>SELECT</c> can be read.
+    /// </summary>
+    private const string ReadOnlySession = "-c default_transaction_read_only=on";
+
+    /// <summary>
+    /// Opens the Postgres database at <paramref name="connectionString"/> (an Npgsql connection string or a
+    /// <c>postgres://</c> URL) read-only (<c>design/51-Read-Only-Store-Open.md</c>): it creates nothing, never migrates,
+    /// its reads never write, and every write on it is refused. Its sessions run with
+    /// <c>default_transaction_read_only = on</c>, so the server refuses a write too, which makes a standby and a role that
+    /// can only <c>SELECT</c> work. Before this returns it checks the database, without the DDL lock or any DDL, through
+    /// the connection's <c>search_path</c>: it must hold a Strata checkpoint log at a <c>checkpoints</c> schema version
+    /// from 1 to the one this build knows. Of <paramref name="options"/> only <see cref="PostgresStoreOptions.Retry"/>,
+    /// <see cref="PostgresStoreOptions.TimeProvider"/> and <see cref="OffloadOptions.Blobs"/> are used; the write options
+    /// have no effect. Owns its pool.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">
+    /// The database has no Strata checkpoint log, or is at version 0 or newer than this build.
+    /// </exception>
+    /// <exception cref="DirectoryNotFoundException">The options name a blob directory that doesn't exist.</exception>
+    public static async Task<PostgresCheckpointStore> OpenReadOnlyAsync(
+        string connectionString, PostgresStoreOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(connectionString);
+        ReadOnlyStores.CheckBlobs(options?.Offload);
+        var builder = new NpgsqlConnectionStringBuilder(PostgresConnection.ToConnectionString(connectionString));
+        builder.Options = string.IsNullOrWhiteSpace(builder.Options) ? ReadOnlySession : $"{builder.Options} {ReadOnlySession}";
+        var store = new PostgresCheckpointStore(
+            NpgsqlDataSource.Create(builder.ConnectionString), options, ownsDataSource: true, readOnly: true);
+        try
+        {
+            await store.CheckReadOnlyAsync(cancellationToken).ConfigureAwait(false);
+            return store;
+        }
+        catch
+        {
+            await store.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// The check of <see cref="OpenReadOnlyAsync"/>: which of the store's tables the <c>search_path</c> resolves, then the
+    /// version row. No <c>checkpoints</c> table is no Strata log; <c>checkpoints</c> without the version table, or without
+    /// its row, is version 0.
+    /// </summary>
+    private async Task CheckReadOnlyAsync(CancellationToken cancellationToken)
+    {
+        _readOnlyVersion = await _retry.RunAsync(
+                "load",
+                async (_, token) =>
+                {
+                    await using var connection = await _dataSource.OpenConnectionAsync(token).ConfigureAwait(false);
+                    bool versions, log;
+                    string database;
+                    await using (var tables = new NpgsqlCommand(
+                        "SELECT to_regclass('strata_schema_version') IS NOT NULL, to_regclass('checkpoints') IS NOT NULL, " +
+                        "to_regclass('checkpoint_threads') IS NOT NULL, current_database()",
+                        connection))
+                    {
+                        await using var reader = await tables.ExecuteReaderAsync(token).ConfigureAwait(false);
+                        await reader.ReadAsync(token).ConfigureAwait(false);
+                        (versions, log, database) = (reader.GetBoolean(0), reader.GetBoolean(1), reader.GetString(3));
+                    }
+
+                    if (!log)
+                    {
+                        throw ReadOnlyStores.NoStrataLog(database);
+                    }
+
+                    if (!versions)
+                    {
+                        return 0L;
+                    }
+
+                    await using var read = new NpgsqlCommand(
+                        "SELECT version FROM strata_schema_version WHERE component = @component", connection);
+                    read.Parameters.Add(PostgresSchema.Param("component", NpgsqlDbType.Text, StoreSchemaVersions.Checkpoints));
+                    return await read.ExecuteScalarAsync(token).ConfigureAwait(false) is long version ? version : 0L;
+                },
+                cancellationToken)
+            .ConfigureAwait(false);
+        ReadOnlyStores.CheckVersion(_readOnlyVersion);
+    }
+
+    /// <summary>Whether the store was opened read-only (<see cref="OpenReadOnlyAsync"/>): it then refuses every write.</summary>
+    public bool IsReadOnly => _readOnly;
+
+    /// <summary>Refuses <paramref name="operation"/> on a read-only store, before anything reaches the database.</summary>
+    private void Writable(string operation)
+    {
+        if (_readOnly)
+        {
+            throw ReadOnlyStores.Refused(operation);
+        }
+    }
+
+    /// <summary>For tests: the store's pool, to show what the server itself refuses on a read-only store's sessions.</summary>
+    internal NpgsqlDataSource DataSource => _dataSource;
 
     /// <summary>
     /// Version 1 of the checkpoint component (<see cref="StoreSchemaVersions"/>): creates the log, its head
@@ -315,8 +440,11 @@ public sealed class PostgresCheckpointStore : ICheckpointStore, ICheckpointQuery
     public Checkpoint? Load(string threadId) => LoadAsync(threadId).AsTask().GetAwaiter().GetResult();
 
     /// <summary>Appends <paramref name="checkpoint"/> to the log at the next sequence for its thread; <see cref="LoadAsync"/> then returns it as the latest.</summary>
-    public async ValueTask SaveAsync(Checkpoint checkpoint, CancellationToken cancellationToken = default) =>
+    public async ValueTask SaveAsync(Checkpoint checkpoint, CancellationToken cancellationToken = default)
+    {
+        Writable(ReadOnlyStores.Save);
         await InsertAsync(checkpoint, expectedSequence: null, lease: null, cancellationToken).ConfigureAwait(false);
+    }
 
     /// <summary>
     /// Appends <paramref name="checkpoint"/> only if <paramref name="expectedSequence"/> is still its thread's
@@ -324,8 +452,11 @@ public sealed class PostgresCheckpointStore : ICheckpointStore, ICheckpointQuery
     /// "Races").
     /// </summary>
     public async ValueTask<bool> SaveIfLatestAsync(
-        Checkpoint checkpoint, long? expectedSequence, CancellationToken cancellationToken = default) =>
-        await InsertAsync(checkpoint, expectedSequence, lease: null, cancellationToken).ConfigureAwait(false);
+        Checkpoint checkpoint, long? expectedSequence, CancellationToken cancellationToken = default)
+    {
+        Writable(ReadOnlyStores.Save);
+        return await InsertAsync(checkpoint, expectedSequence, lease: null, cancellationToken).ConfigureAwait(false);
+    }
 
     /// <summary>
     /// Appends <paramref name="checkpoint"/> only if <paramref name="lease"/>'s token is still its thread's
@@ -335,6 +466,7 @@ public sealed class PostgresCheckpointStore : ICheckpointStore, ICheckpointQuery
     public async ValueTask<bool> SaveUnderLeaseAsync(
         Checkpoint checkpoint, ThreadLease lease, long? expectedSequence = null, CancellationToken cancellationToken = default)
     {
+        Writable(ReadOnlyStores.Save);
         ThreadLeases.CheckThread(checkpoint, lease);
         return await InsertAsync(checkpoint, expectedSequence, lease, cancellationToken).ConfigureAwait(false);
     }
@@ -346,6 +478,7 @@ public sealed class PostgresCheckpointStore : ICheckpointStore, ICheckpointQuery
     public async ValueTask<LeaseAttempt> TryAcquireLeaseAsync(
         string threadId, string owner, TimeSpan ttl, CancellationToken cancellationToken = default)
     {
+        Writable(ReadOnlyStores.AcquireLease);
         ThreadLeases.Check(owner, ttl);
         await ReadyAsync(cancellationToken).ConfigureAwait(false);
 
@@ -415,6 +548,7 @@ public sealed class PostgresCheckpointStore : ICheckpointStore, ICheckpointQuery
     public async ValueTask<ThreadLease?> RenewLeaseAsync(
         ThreadLease lease, TimeSpan ttl, CancellationToken cancellationToken = default)
     {
+        Writable(ReadOnlyStores.RenewLease);
         ArgumentNullException.ThrowIfNull(lease);
         ThreadLeases.CheckTtl(ttl);
         await ReadyAsync(cancellationToken).ConfigureAwait(false);
@@ -443,6 +577,7 @@ public sealed class PostgresCheckpointStore : ICheckpointStore, ICheckpointQuery
 
     public async ValueTask<bool> ReleaseLeaseAsync(ThreadLease lease, CancellationToken cancellationToken = default)
     {
+        Writable(ReadOnlyStores.ReleaseLease);
         ArgumentNullException.ThrowIfNull(lease);
         await ReadyAsync(cancellationToken).ConfigureAwait(false);
 
@@ -624,6 +759,8 @@ public sealed class PostgresCheckpointStore : ICheckpointStore, ICheckpointQuery
     /// </summary>
     private BlobReader ReaderFor(string threadId, bool retried) => _blobs is { } blobs
         ? (hashes, cancellationToken) => OffloadedBlobs.ReadAsync(blobs, threadId, hashes, cancellationToken)
+        : _readOnly && !ReadOnlyStores.HasOwnBlobs(_readOnlyVersion)
+        ? ReadOnlyStores.NoBlobs
         : async (hashes, cancellationToken) =>
         {
             const string sql = "SELECT hash, content FROM checkpoint_blobs WHERE thread_id = $1 AND hash = ANY($2)";
@@ -1447,6 +1584,7 @@ public sealed class PostgresCheckpointStore : ICheckpointStore, ICheckpointQuery
         int limit = ThreadQuery.MaxLimit,
         CancellationToken cancellationToken = default)
     {
+        Writable(ReadOnlyStores.Purge);
         ThreadQuery.CheckLimit(limit);
         states ??= CheckpointRetention.Finished;
         if (states.Count == 0)
@@ -1541,7 +1679,7 @@ public sealed class PostgresCheckpointStore : ICheckpointStore, ICheckpointQuery
     public void Dispose()
     {
         _group?.DrainAsync().AsTask().GetAwaiter().GetResult();
-        _preparation.Dispose();
+        _preparation?.Dispose();
         if (_ownsDataSource)
         {
             _dataSource.Dispose();
@@ -1556,7 +1694,7 @@ public sealed class PostgresCheckpointStore : ICheckpointStore, ICheckpointQuery
             await _group.DrainAsync().ConfigureAwait(false);
         }
 
-        _preparation.Dispose();
+        _preparation?.Dispose();
         if (_ownsDataSource)
         {
             await _dataSource.DisposeAsync().ConfigureAwait(false);

@@ -336,6 +336,19 @@ public sealed class RedisCheckpointStore : ICheckpointStore, ICheckpointQuery, I
         return redis.call('ZRANGE', KEYS[1], start, start + tonumber(ARGV[3]) - 1, 'REV', 'WITHSCORES')
         """;
 
+    /// <summary>
+    /// What makes a script declare that it writes nothing (Redis 7 and later), so that <c>EVAL_RO</c> runs it, on a
+    /// replica too, and for an ACL user allowed only read commands and <c>EVAL_RO</c>
+    /// (<c>design/51-Read-Only-Store-Open.md</c>, "Redis"). Older Redis can't parse it.
+    /// </summary>
+    private const string NoWritesFlag = "#!lua flags=no-writes\n";
+
+    /// <summary><see cref="GetLeaseScript"/> flagged <c>no-writes</c>, as a read-only store runs it on Redis 7 and later.</summary>
+    private const string GetLeaseReadOnlyScript = NoWritesFlag + GetLeaseScript;
+
+    /// <summary><see cref="CandidatesScript"/> flagged <c>no-writes</c>, as a read-only store runs it on Redis 7 and later.</summary>
+    private const string CandidatesReadOnlyScript = NoWritesFlag + CandidatesScript;
+
     /// <summary>How many candidates one listing call examines at most, per page slot.</summary>
     private const int ExaminedPerSlot = 10;
 
@@ -350,6 +363,12 @@ public sealed class RedisCheckpointStore : ICheckpointStore, ICheckpointQuery, I
 
     /// <summary>Where offloaded values go when not in this Redis.</summary>
     private readonly ICheckpointBlobStore? _blobs;
+
+    /// <summary>Whether the store was opened read-only (<see cref="ConnectReadOnlyAsync"/>).</summary>
+    private readonly bool _readOnly;
+
+    /// <summary>Whether a read-only store runs its read scripts flagged <c>no-writes</c> with <c>EVAL_RO</c>: on Redis 7 and later.</summary>
+    private readonly bool _readOnlyScripts;
     private volatile bool _indexed;
 
     /// <param name="database">An existing database handle, e.g. from your application's shared multiplexer.</param>
@@ -388,6 +407,97 @@ public sealed class RedisCheckpointStore : ICheckpointStore, ICheckpointQuery, I
         _ownedConnection = connection;
     }
 
+    /// <summary>
+    /// A read-only store over <paramref name="connection"/>, which it owns: it writes nothing, and keeps no writer. The
+    /// write options are dropped before the writable constructor sees them, so a value it would refuse (a zero
+    /// <see cref="RedisStoreOptions.FinishedThreadTtl"/>, say) has no effect here, as in the other read-only stores.
+    /// </summary>
+    private RedisCheckpointStore(ConnectionMultiplexer connection, RedisStoreOptions options, bool readOnlyScripts)
+        : this(connection, options with
+        {
+            FinishedThreadTtl = null,
+            Deltas = null,
+            Offload = options.Offload?.Blobs is { } blobs ? new OffloadOptions { Blobs = blobs } : null,
+        })
+    {
+        _readOnly = true;
+        _readOnlyScripts = readOnlyScripts;
+        _writer = null;
+    }
+
+    /// <summary>
+    /// Connects to <paramref name="url"/> (see <see cref="RedisConnection.Connect"/>) read-only
+    /// (<c>design/51-Read-Only-Store-Open.md</c>): the store creates no key, never indexes the prefix, its reads never
+    /// write (a listed thread whose list is gone is skipped, and left in the index), and every write on it is refused.
+    /// Before this returns it checks that <see cref="RedisStoreOptions.Prefix"/> has the thread index's marker
+    /// (<c>{prefix}:threads:indexed</c>). On Redis 7 and later the two reads that run scripts (a lease, a listing's
+    /// candidates) run them flagged <c>no-writes</c> with <c>EVAL_RO</c>, so an ACL user allowed only reads and
+    /// <c>EVAL_RO</c> works; on older Redis, read-only is the store's promise, not the server's. Of
+    /// <paramref name="options"/> only <see cref="RedisStoreOptions.Prefix"/>, <see cref="RedisStoreOptions.Retry"/>,
+    /// <see cref="RedisStoreOptions.TimeProvider"/> and <see cref="OffloadOptions.Blobs"/> are used; the write options
+    /// have no effect. Owns the connection.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The prefix has no thread index.</exception>
+    /// <exception cref="DirectoryNotFoundException">The options name a blob directory that doesn't exist.</exception>
+    public static async Task<RedisCheckpointStore> ConnectReadOnlyAsync(
+        string url, RedisStoreOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(url);
+        options ??= new RedisStoreOptions();
+        ReadOnlyStores.CheckBlobs(options.Offload);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        // A server that won't say its version (INFO is refused to a user allowed only reads) is taken to be Redis 7: only
+        // Redis 7 gives such a user a script it can run, with EVAL_RO. StackExchange.Redis reads the version with INFO as
+        // it connects, and falls back to this one.
+        var configuration = RedisConnection.ToConfigurationOptions(url);
+        if (!url.Contains("version=", StringComparison.OrdinalIgnoreCase))
+        {
+            configuration.DefaultVersion = new Version(7, 0);
+        }
+
+        var connection = await RedisConnection.ConnectAsync(configuration).ConfigureAwait(false);
+        try
+        {
+            var database = connection.GetDatabase();
+            var prefix = options.Prefix;
+            var indexed = await new StoreRetrier(options.Retry, options.TimeProvider, "redis", RedisFaults.IsTransient)
+                .RunAsync("load", (_, _) => new ValueTask<bool>(database.KeyExistsAsync($"{prefix}:threads:indexed")), cancellationToken)
+                .ConfigureAwait(false);
+            var servers = connection.GetServers();
+            var flagged = servers.Length > 0 && servers.All(server => server.Version >= new Version(7, 0));
+            return indexed
+                ? new RedisCheckpointStore(connection, options, flagged)
+                : throw ReadOnlyStores.PrefixNotIndexed(prefix);
+        }
+        catch
+        {
+            await connection.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    /// <summary>Whether the store was opened read-only (<see cref="ConnectReadOnlyAsync"/>): it then refuses every write.</summary>
+    public bool IsReadOnly => _readOnly;
+
+    /// <summary>Refuses <paramref name="operation"/> on a read-only store, before anything reaches Redis.</summary>
+    private void Writable(string operation)
+    {
+        if (_readOnly)
+        {
+            throw ReadOnlyStores.Refused(operation);
+        }
+    }
+
+    /// <summary>
+    /// Runs a script that only reads: flagged <c>no-writes</c> with <c>EVAL_RO</c> on a read-only store on Redis 7 and
+    /// later, else as written with <c>EVAL</c>.
+    /// </summary>
+    private Task<RedisResult> EvaluateReadAsync(string script, string readOnlyScript, RedisKey[] keys, RedisValue[]? values = null) =>
+        _readOnlyScripts
+            ? _database.ScriptEvaluateReadOnlyAsync(readOnlyScript, keys, values)
+            : _database.ScriptEvaluateAsync(script, keys, values);
+
     /// <summary>Connects to <paramref name="url"/> (see <see cref="RedisConnection.Connect"/>) and owns the connection.</summary>
     public static RedisCheckpointStore Connect(string url, string prefix = RedisConnection.DefaultPrefix) =>
         new(RedisConnection.Connect(url), new RedisStoreOptions { Prefix = prefix });
@@ -403,7 +513,8 @@ public sealed class RedisCheckpointStore : ICheckpointStore, ICheckpointQuery, I
     /// </summary>
     private async ValueTask ReadyAsync(CancellationToken cancellationToken)
     {
-        if (_indexed)
+        // A read-only store checked the marker when it connected, and never indexes.
+        if (_indexed || _readOnly)
         {
             return;
         }
@@ -498,13 +609,17 @@ public sealed class RedisCheckpointStore : ICheckpointStore, ICheckpointQuery, I
     /// <summary>Synchronous <see cref="LoadAsync"/>.</summary>
     public Checkpoint? Load(string threadId) => LoadAsync(threadId).AsTask().GetAwaiter().GetResult();
 
-    public async ValueTask SaveAsync(Checkpoint checkpoint, CancellationToken cancellationToken = default) =>
+    public async ValueTask SaveAsync(Checkpoint checkpoint, CancellationToken cancellationToken = default)
+    {
+        Writable(ReadOnlyStores.Save);
         await SaveOnceAsync(checkpoint, expectedSequence: null, lease: null, cancellationToken).ConfigureAwait(false);
+    }
 
     /// <summary>Appends with <see cref="SaveIfLatestScript"/> when there is a sequence to compare against.</summary>
     public async ValueTask<bool> SaveIfLatestAsync(
         Checkpoint checkpoint, long? expectedSequence, CancellationToken cancellationToken = default)
     {
+        Writable(ReadOnlyStores.Save);
         if (expectedSequence is not { } expected)
         {
             await SaveAsync(checkpoint, cancellationToken).ConfigureAwait(false);
@@ -518,6 +633,7 @@ public sealed class RedisCheckpointStore : ICheckpointStore, ICheckpointQuery, I
     public async ValueTask<bool> SaveUnderLeaseAsync(
         Checkpoint checkpoint, ThreadLease lease, long? expectedSequence = null, CancellationToken cancellationToken = default)
     {
+        Writable(ReadOnlyStores.Save);
         ThreadLeases.CheckThread(checkpoint, lease);
         return await SaveOnceAsync(checkpoint, expectedSequence, lease, cancellationToken).ConfigureAwait(false);
     }
@@ -694,6 +810,7 @@ public sealed class RedisCheckpointStore : ICheckpointStore, ICheckpointQuery, I
     public async ValueTask<LeaseAttempt> TryAcquireLeaseAsync(
         string threadId, string owner, TimeSpan ttl, CancellationToken cancellationToken = default)
     {
+        Writable(ReadOnlyStores.AcquireLease);
         ThreadLeases.Check(owner, ttl);
 
         // An acquisition that may have run is not made again: the store can't tell its own lease from another
@@ -711,6 +828,7 @@ public sealed class RedisCheckpointStore : ICheckpointStore, ICheckpointQuery, I
     public async ValueTask<ThreadLease?> RenewLeaseAsync(
         ThreadLease lease, TimeSpan ttl, CancellationToken cancellationToken = default)
     {
+        Writable(ReadOnlyStores.RenewLease);
         ArgumentNullException.ThrowIfNull(lease);
         ThreadLeases.CheckTtl(ttl);
         var expiresAt = (long)await RunAsync(
@@ -723,6 +841,7 @@ public sealed class RedisCheckpointStore : ICheckpointStore, ICheckpointQuery, I
 
     public async ValueTask<bool> ReleaseLeaseAsync(ThreadLease lease, CancellationToken cancellationToken = default)
     {
+        Writable(ReadOnlyStores.ReleaseLease);
         ArgumentNullException.ThrowIfNull(lease);
         return (int)await RunAsync(
             "lease",
@@ -733,7 +852,7 @@ public sealed class RedisCheckpointStore : ICheckpointStore, ICheckpointQuery, I
     public async ValueTask<ThreadLease?> GetLeaseAsync(string threadId, CancellationToken cancellationToken = default)
     {
         var reply = await RunAsync(
-            "lease", () => _database.ScriptEvaluateAsync(GetLeaseScript, [LeaseKey(threadId)]), cancellationToken)
+            "lease", () => EvaluateReadAsync(GetLeaseScript, GetLeaseReadOnlyScript, [LeaseKey(threadId)]), cancellationToken)
             .ConfigureAwait(false);
         if (reply.IsNull)
         {
@@ -862,6 +981,7 @@ public sealed class RedisCheckpointStore : ICheckpointStore, ICheckpointQuery, I
     /// </summary>
     public async ValueTask<int> RebuildIndexAsync(CancellationToken cancellationToken = default)
     {
+        Writable(ReadOnlyStores.RebuildIndex);
         await ReadyAsync(cancellationToken).ConfigureAwait(false);
         return await _retry.RunAsync("migrate", (_, token) => new ValueTask<int>(IndexAllAsync(token)), cancellationToken)
             .ConfigureAwait(false);
@@ -913,8 +1033,9 @@ public sealed class RedisCheckpointStore : ICheckpointStore, ICheckpointQuery, I
     /// <summary>Up to <paramref name="count"/> (score, thread id) candidates from <paramref name="set"/> after <paramref name="start"/>.</summary>
     private async Task<List<(long Score, string ThreadId)>> CandidatesAsync(RedisKey set, ThreadCursor? start, int count)
     {
-        var flat = (string[])(await _database.ScriptEvaluateAsync(
+        var flat = (string[])(await EvaluateReadAsync(
             CandidatesScript,
+            CandidatesReadOnlyScript,
             [set],
             [
                 start is null ? string.Empty : Score(start.UpdatedAt).ToString(CultureInfo.InvariantCulture),
@@ -1071,9 +1192,14 @@ public sealed class RedisCheckpointStore : ICheckpointStore, ICheckpointQuery, I
                 var latest = await reads[i].Latest.ConfigureAwait(false);
                 if (latest.IsNull)
                 {
-                    // The thread's list is gone (it expired, or was deleted): take it out of the index.
-                    await _database.ScriptEvaluateAsync(IndexScript, IndexKeys(chunk[i].ThreadId), [chunk[i].ThreadId])
-                        .ConfigureAwait(false);
+                    // The thread's list is gone (it expired, or was deleted): take it out of the index, unless the store
+                    // is read-only, which only skips it.
+                    if (!_readOnly)
+                    {
+                        await _database.ScriptEvaluateAsync(IndexScript, IndexKeys(chunk[i].ThreadId), [chunk[i].ThreadId])
+                            .ConfigureAwait(false);
+                    }
+
                     continue;
                 }
 
@@ -1130,6 +1256,7 @@ public sealed class RedisCheckpointStore : ICheckpointStore, ICheckpointQuery, I
         int limit = ThreadQuery.MaxLimit,
         CancellationToken cancellationToken = default)
     {
+        Writable(ReadOnlyStores.Purge);
         ThreadQuery.CheckLimit(limit);
         states ??= CheckpointRetention.Finished;
         if (states.Count == 0)

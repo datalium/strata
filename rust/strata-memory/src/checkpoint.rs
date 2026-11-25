@@ -30,6 +30,7 @@ use crate::deltas::{
 };
 use crate::group_commit::{Flush, GroupCommit, Queue, Row as FlushRow, Verdict, record_saved};
 use crate::offload::{self, BlobStore, Offload};
+use crate::read_only;
 use crate::retry::{Failure, FaultHook, fault_at};
 use crate::schema_versions::{self, SchemaStep};
 use crate::support::{
@@ -522,7 +523,8 @@ pub const CHECKPOINT_LEASES_DDL: &str = "CREATE TABLE IF NOT EXISTS checkpoint_l
 /// What the file holds is recorded in its `strata_schema_version` table
 /// ([`crate::schema_versions`], `design/34-Storage-Hardening.md`): opening a
 /// file brings it up to date, and a file a newer build has moved on is
-/// refused.
+/// refused. [`Self::open_read_only`] opens one without changing it
+/// (`design/51-Read-Only-Store-Open.md`).
 pub struct SqliteCheckpointStore {
     conn: Arc<Mutex<rusqlite::Connection>>,
     clock: Clock,
@@ -530,6 +532,12 @@ pub struct SqliteCheckpointStore {
     writer: Option<Arc<CheckpointWriter>>,
     /// Where offloaded values go when not in this file.
     blobs: Option<Arc<dyn BlobStore>>,
+    /// Opened with [`Self::open_read_only`]: every write is refused.
+    read_only: bool,
+    /// Whether the file has a `checkpoint_blobs` table to read offloaded
+    /// values from: a file at the checkpoints component's version 1, opened
+    /// read-only, has none, and none of its rows can refer to one.
+    blob_table: bool,
 }
 
 /// Options of [`SqliteCheckpointStore`]. Mirrors the .NET `SqliteStoreOptions`.
@@ -633,6 +641,69 @@ impl SqliteCheckpointStore {
     /// [`open_in_memory`](Self::open_in_memory) with `options`.
     pub fn open_in_memory_with(options: SqliteStoreOptions) -> Result<Self, CheckpointStoreError> {
         Self::open_in_memory()?.with_options(options)
+    }
+
+    /// Opens the file at `path` without changing it
+    /// (`design/51-Read-Only-Store-Open.md`): with SQLite's read-only flag
+    /// and no create flag, then `PRAGMA query_only`, so SQLite itself refuses
+    /// a write. A missing file is refused, and none is created. The file is
+    /// checked before this returns, in no transaction: one with no
+    /// `checkpoints` table is refused, and so is one at the checkpoints
+    /// component's version 0 (from before the version table) or at a version
+    /// newer than this build's; versions 1 to this build's are read. Nothing
+    /// is migrated. A file whose writer stopped mid-write (a hot journal) is
+    /// refused: a read-only connection can't roll it back.
+    ///
+    /// Of `options`, only the offload's blob store is used, as where
+    /// offloaded values are read from; it is checked to be there. Group
+    /// commit, deltas and the offload threshold have no effect. Every write
+    /// method returns `the store was opened read-only: <operation> is
+    /// refused`.
+    pub fn open_read_only(
+        path: impl AsRef<Path>,
+        options: SqliteStoreOptions,
+    ) -> Result<Self, CheckpointStoreError> {
+        let path = path.as_ref();
+        let shown = path.display().to_string();
+        // The blob directory first, as every read-only store does (and .NET).
+        let blobs = read_only::blobs(options.offload.as_ref())?;
+        // Before the driver opens it, so the error names the path. A directory
+        // isn't a store file either (as .NET's `File.Exists`).
+        if !path.is_file() {
+            return Err(read_only::missing_sqlite_file(&shown));
+        }
+        let conn = rusqlite::Connection::open_with_flags(
+            path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .map_err(|err| read_only_err(err, &shown))?;
+        conn.pragma_update(None, "query_only", true)
+            .map_err(|err| read_only_err(err, &shown))?;
+        let version = read_only_version(&conn, &shown)?;
+        Ok(Self {
+            conn: Arc::new(Mutex::new(conn)),
+            clock: system_clock(),
+            group: None,
+            writer: None,
+            blobs,
+            read_only: true,
+            blob_table: version >= 2,
+        })
+    }
+
+    /// Whether the store was opened with [`Self::open_read_only`], and so
+    /// refuses every write.
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
+    }
+
+    /// For tests: runs `sql` on the store's own connection, past every check
+    /// of the store's, to show what the connection itself allows.
+    #[doc(hidden)]
+    pub async fn execute_unguarded(&self, sql: &str) -> Result<(), CheckpointStoreError> {
+        let sql = sql.to_string();
+        self.with_conn(move |conn| conn.execute_batch(&sql).map_err(sqlite_err))
+            .await
     }
 
     fn with_options(mut self, options: SqliteStoreOptions) -> Result<Self, CheckpointStoreError> {
@@ -755,6 +826,8 @@ impl SqliteCheckpointStore {
             group: None,
             writer: None,
             blobs: None,
+            read_only: false,
+            blob_table: true,
         })
     }
 
@@ -839,7 +912,7 @@ impl SqliteCheckpointStore {
         &self,
         thread_id: &str,
     ) -> Result<Option<(i64, Checkpoint)>, CheckpointStoreError> {
-        let (owned, own) = (thread_id.to_string(), self.blobs.is_none());
+        let (owned, own) = (thread_id.to_string(), self.own_blobs());
         let Some((sequence, decoded, depth)) = self
             .with_conn(move |conn| latest_row(conn, &owned, own))
             .await?
@@ -855,8 +928,14 @@ impl SqliteCheckpointStore {
         Ok(Some((sequence, decoded.checkpoint)))
     }
 
+    /// Whether offloaded values are read from this file's `checkpoint_blobs`.
+    fn own_blobs(&self) -> bool {
+        self.blobs.is_none() && self.blob_table
+    }
+
     /// Reads the offloaded values `decoded` refers to from the blob store the
-    /// options name; those in this file were read with the rows.
+    /// options name; those in this file were read with the rows. A file with
+    /// no blob table has none to give.
     async fn resolve(
         &self,
         thread_id: &str,
@@ -871,6 +950,7 @@ impl SqliteCheckpointStore {
                 let found = offload::read(&**blobs, thread_id, &wanted).await?;
                 deltas::resolve(decoded, &found)
             }
+            None if !self.blob_table => deltas::resolve(decoded, &HashMap::new()),
             None => Ok(decoded),
         }
     }
@@ -928,6 +1008,62 @@ fn migrate(
     )
     .map_err(sqlite_err)?;
     tx.commit().map_err(sqlite_err)
+}
+
+/// What a read-only open checks (`design/51-Read-Only-Store-Open.md`,
+/// "SQLite"): which of the version table, the log and its head table the
+/// file has, read from `sqlite_master`, then the checkpoints component's
+/// version, in no transaction and creating nothing. Refuses a file with no
+/// log, at version 0 (a log with no version table, or no row in it) or newer
+/// than this build. Returns the version.
+fn read_only_version(conn: &rusqlite::Connection, path: &str) -> Result<i64, CheckpointStoreError> {
+    let known = schema_versions::known(
+        schema_versions::BASELINE_VERSION,
+        &schema_versions::sqlite_checkpoint_steps(&[]),
+    );
+    let tables: Vec<String> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT name FROM sqlite_master WHERE type = 'table'
+                 AND name IN ('strata_schema_version', 'checkpoints', 'checkpoint_threads')",
+            )
+            .map_err(|err| read_only_err(err, path))?;
+        stmt.query_map([], |row| row.get(0))
+            .map_err(|err| read_only_err(err, path))?
+            .collect::<rusqlite::Result<_>>()
+            .map_err(|err| read_only_err(err, path))?
+    };
+    let has = |table: &str| tables.iter().any(|name| name == table);
+    if !has("checkpoints") {
+        return Err(read_only::no_strata_log(path));
+    }
+    let found = if has(schema_versions::TABLE) {
+        conn.query_row(
+            "SELECT version FROM strata_schema_version WHERE component = ?1",
+            [schema_versions::CHECKPOINTS],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|err| read_only_err(err, path))?
+        .unwrap_or(0)
+    } else {
+        0
+    };
+    read_only::check_version(found, known)?;
+    Ok(found)
+}
+
+/// A read-only connection's error: a hot journal, which it can't roll back,
+/// as the shared message; anything else as SQLite says it.
+fn read_only_err(err: rusqlite::Error, path: &str) -> CheckpointStoreError {
+    match &err {
+        rusqlite::Error::SqliteFailure(error, _)
+            if error.extended_code == rusqlite::ffi::SQLITE_READONLY_ROLLBACK =>
+        {
+            read_only::hot_journal(path)
+        }
+        _ => sqlite_err(err),
+    }
 }
 
 /// Version 1 of the checkpoint component, inside [`migrate`]'s transaction:
@@ -1732,6 +1868,9 @@ pub(crate) fn decode_page(
 
 impl CheckpointStore for SqliteCheckpointStore {
     fn save(&self, checkpoint: Checkpoint) -> BoxFuture<'_, Result<(), CheckpointStoreError>> {
+        if self.read_only {
+            return read_only::refuse(read_only::SAVE);
+        }
         if let Some(group) = &self.group {
             return Box::pin(async move {
                 let row = FlushRow {
@@ -1777,6 +1916,9 @@ impl CheckpointStore for SqliteCheckpointStore {
         checkpoint: Checkpoint,
         expected_sequence: Option<i64>,
     ) -> BoxFuture<'_, Result<bool, CheckpointStoreError>> {
+        if self.read_only {
+            return read_only::refuse(read_only::SAVE);
+        }
         if let Some(group) = &self.group {
             return Box::pin(async move {
                 let row = FlushRow {
@@ -1796,6 +1938,9 @@ impl CheckpointStore for SqliteCheckpointStore {
         owner: &'a str,
         ttl: Duration,
     ) -> BoxFuture<'a, Result<LeaseAttempt, CheckpointStoreError>> {
+        if self.read_only {
+            return read_only::refuse(read_only::ACQUIRE_LEASE);
+        }
         let (thread_id, owner, now) = (thread_id.to_string(), owner.to_string(), self.now_millis());
         self.with_conn(move |conn| acquire_lease_row(conn, &thread_id, &owner, ttl, now))
     }
@@ -1805,6 +1950,9 @@ impl CheckpointStore for SqliteCheckpointStore {
         lease: &'a ThreadLease,
         ttl: Duration,
     ) -> BoxFuture<'a, Result<Option<ThreadLease>, CheckpointStoreError>> {
+        if self.read_only {
+            return read_only::refuse(read_only::RENEW_LEASE);
+        }
         let (lease, now) = (lease.clone(), self.now_millis());
         self.with_conn(move |conn| renew_lease_row(conn, &lease, ttl, now))
     }
@@ -1813,6 +1961,9 @@ impl CheckpointStore for SqliteCheckpointStore {
         &'a self,
         lease: &'a ThreadLease,
     ) -> BoxFuture<'a, Result<bool, CheckpointStoreError>> {
+        if self.read_only {
+            return read_only::refuse(read_only::RELEASE_LEASE);
+        }
         let lease = lease.clone();
         self.with_conn(move |conn| release_lease_row(conn, &lease))
     }
@@ -1831,6 +1982,9 @@ impl CheckpointStore for SqliteCheckpointStore {
         lease: &'a ThreadLease,
         expected_sequence: Option<i64>,
     ) -> BoxFuture<'a, Result<LeasedSave, CheckpointStoreError>> {
+        if self.read_only {
+            return read_only::refuse(read_only::SAVE);
+        }
         if let Some(group) = &self.group {
             return Box::pin(async move {
                 check_lease_thread(&checkpoint, lease)?;
@@ -1922,6 +2076,9 @@ impl CheckpointRetention for SqliteCheckpointStore {
         states: &'a PurgeStates,
         limit: usize,
     ) -> BoxFuture<'a, Result<usize, CheckpointStoreError>> {
+        if self.read_only {
+            return read_only::refuse(read_only::PURGE);
+        }
         if let Err(refused) = check_limit(limit) {
             return Box::pin(std::future::ready(Err(refused)));
         }
@@ -1964,7 +2121,7 @@ impl CheckpointQuery for SqliteCheckpointStore {
     ) -> BoxFuture<'a, Result<CheckpointLogPage, CheckpointStoreError>> {
         Box::pin(async move {
             check_limit(limit)?;
-            let (owned, own) = (thread_id.to_string(), self.blobs.is_none());
+            let (owned, own) = (thread_id.to_string(), self.own_blobs());
             let decoded = self
                 .with_conn(move |conn| log_rows(conn, &owned, after_sequence, limit, own))
                 .await?;

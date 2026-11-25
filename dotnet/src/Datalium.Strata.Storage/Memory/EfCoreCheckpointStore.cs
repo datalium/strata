@@ -189,6 +189,12 @@ public sealed class EfCoreCheckpointStore : ICheckpointStore, ICheckpointQuery, 
     /// <summary><c>SQLITE_CONSTRAINT</c>: another writer took the sequence first.</summary>
     private const int SqlitePrimaryKeyViolation = 19;
 
+    /// <summary>
+    /// <c>SQLITE_READONLY_ROLLBACK</c>: the file has a hot journal, which a read-only connection can't roll back, so
+    /// SQLite won't read it.
+    /// </summary>
+    private const int SqliteReadOnlyRollback = 776;
+
     private readonly CheckpointDbContext _db;
     private readonly SqliteConnection? _ownedConnection;
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -199,6 +205,12 @@ public sealed class EfCoreCheckpointStore : ICheckpointStore, ICheckpointQuery, 
     /// <summary>Where offloaded values go when not in this database.</summary>
     private readonly ICheckpointBlobStore? _blobs;
     private readonly Func<string, ValueTask>? _fault;
+
+    /// <summary>
+    /// The <c>checkpoints</c> component's version of a store opened read-only (<see cref="OpenReadOnlyAsync"/>), as it
+    /// was at open; <see langword="null"/> for a writable store.
+    /// </summary>
+    private readonly long? _readOnlyVersion;
 
     /// <param name="timeProvider">
     /// The clock thread leases expire on (<c>design/32-Thread-Leases.md</c>); the system clock when not given.
@@ -360,6 +372,123 @@ public sealed class EfCoreCheckpointStore : ICheckpointStore, ICheckpointQuery, 
 
     private int Count(string sql) => _db.Database.SqlQueryRaw<int>(sql).AsEnumerable().Single();
 
+    /// <summary>A read-only store over <paramref name="connection"/>, already checked by <see cref="OpenReadOnlyAsync"/>.</summary>
+    private EfCoreCheckpointStore(CheckpointDbContext db, SqliteConnection connection, SqliteStoreOptions? options, long version)
+    {
+        _db = db;
+        _ownedConnection = connection;
+        _clock = TimeProvider.System;
+        _blobs = options?.Offload?.Blobs;
+        _readOnlyVersion = version;
+    }
+
+    /// <summary>
+    /// Opens the SQLite file at <paramref name="path"/> read-only (<c>design/51-Read-Only-Store-Open.md</c>): it creates
+    /// nothing, never migrates, its reads never write, and every write on it is refused. The file is opened in SQLite's
+    /// read-only mode with <c>PRAGMA query_only</c>, so SQLite refuses a write too, and checked before this returns: it
+    /// must hold a Strata checkpoint log at a <c>checkpoints</c> schema version from 1 to the one this build knows.
+    /// Of <paramref name="options"/> only <see cref="OffloadOptions.Blobs"/> is used, to read offloaded values from;
+    /// the write options have no effect. Leases are read on the system clock.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">
+    /// The file doesn't exist, has no Strata checkpoint log, is at version 0 or newer than this build, or has an
+    /// unfinished write (a hot journal) that only a writer can roll back.
+    /// </exception>
+    /// <exception cref="DirectoryNotFoundException">The options name a blob directory that doesn't exist.</exception>
+    public static async Task<EfCoreCheckpointStore> OpenReadOnlyAsync(
+        string path, SqliteStoreOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(path);
+        ReadOnlyStores.CheckBlobs(options?.Offload);
+
+        // Checked first, so the error names the path rather than SQLite's "unable to open database file".
+        if (!File.Exists(path))
+        {
+            throw ReadOnlyStores.MissingSqliteFile(path);
+        }
+
+        // One connection for the store's life, not pooled: query_only is a setting of the connection, and disposing
+        // the store lets the file go.
+        var connection = new SqliteConnection(
+            new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString());
+        try
+        {
+            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+            await using (var queryOnly = connection.CreateCommand())
+            {
+                queryOnly.CommandText = "PRAGMA query_only = ON";
+                await queryOnly.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            var version = await ReadOnlyVersionAsync(connection, path, cancellationToken).ConfigureAwait(false);
+            var contextOptions = new DbContextOptionsBuilder<CheckpointDbContext>().UseSqlite(connection).Options;
+            return new EfCoreCheckpointStore(new CheckpointDbContext(contextOptions), connection, options, version);
+        }
+        catch (SqliteException ex) when (ex.SqliteExtendedErrorCode == SqliteReadOnlyRollback)
+        {
+            await connection.DisposeAsync().ConfigureAwait(false);
+            throw ReadOnlyStores.HotJournal(path, ex);
+        }
+        catch
+        {
+            await connection.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// The check of <see cref="OpenReadOnlyAsync"/>, outside any transaction (<c>BEGIN IMMEDIATE</c> would take a write
+    /// lock): which of the store's tables <c>sqlite_master</c> has, then the version row. No <c>checkpoints</c> table is no
+    /// Strata log; <c>checkpoints</c> without the version table, or without its row, is version 0.
+    /// </summary>
+    private static async Task<long> ReadOnlyVersionAsync(SqliteConnection connection, string path, CancellationToken cancellationToken)
+    {
+        var tables = new HashSet<string>(StringComparer.Ordinal);
+        await using (var master = connection.CreateCommand())
+        {
+            master.CommandText =
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ($version, 'checkpoints', 'checkpoint_threads')";
+            master.Parameters.AddWithValue("$version", StoreSchemaVersions.Table);
+            await using var reader = await master.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                tables.Add(reader.GetString(0));
+            }
+        }
+
+        if (!tables.Contains("checkpoints"))
+        {
+            throw ReadOnlyStores.NoStrataLog(path);
+        }
+
+        long found = 0;
+        if (tables.Contains(StoreSchemaVersions.Table))
+        {
+            await using var read = connection.CreateCommand();
+            read.CommandText = "SELECT version FROM strata_schema_version WHERE component = $component";
+            read.Parameters.AddWithValue("$component", StoreSchemaVersions.Checkpoints);
+            found = await read.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is long version ? version : 0;
+        }
+
+        ReadOnlyStores.CheckVersion(found);
+        return found;
+    }
+
+    /// <summary>Whether the store was opened read-only (<see cref="OpenReadOnlyAsync"/>): it then refuses every write.</summary>
+    public bool IsReadOnly => _readOnlyVersion is not null;
+
+    /// <summary>Refuses <paramref name="operation"/> on a read-only store, before anything reaches the database.</summary>
+    private void Writable(string operation)
+    {
+        if (IsReadOnly)
+        {
+            throw ReadOnlyStores.Refused(operation);
+        }
+    }
+
+    /// <summary>For tests: the connection of a read-only store, to show what SQLite itself refuses on it.</summary>
+    internal SqliteConnection? ReadOnlyConnection => IsReadOnly ? _ownedConnection : null;
+
     /// <summary>
     /// A self-contained in-memory SQLite database for tests: owns and keeps open the
     /// <see cref="SqliteConnection"/> a SQLite in-memory database needs to stay alive for
@@ -383,6 +512,7 @@ public sealed class EfCoreCheckpointStore : ICheckpointStore, ICheckpointQuery, 
     /// <summary>Appends <paramref name="checkpoint"/> to the log at the next sequence for its thread; <see cref="LoadAsync"/> then returns it as the latest.</summary>
     public async ValueTask SaveAsync(Checkpoint checkpoint, CancellationToken cancellationToken = default)
     {
+        Writable(ReadOnlyStores.Save);
         if (_group is { } group)
         {
             await group.SaveAsync(checkpoint, expectedSequence: null, lease: null, cancellationToken).ConfigureAwait(false);
@@ -691,6 +821,7 @@ public sealed class EfCoreCheckpointStore : ICheckpointStore, ICheckpointQuery, 
     public async ValueTask<bool> SaveIfLatestAsync(
         Checkpoint checkpoint, long? expectedSequence, CancellationToken cancellationToken = default)
     {
+        Writable(ReadOnlyStores.Save);
         if (expectedSequence is not { } expected)
         {
             await SaveAsync(checkpoint, cancellationToken).ConfigureAwait(false);
@@ -715,6 +846,7 @@ public sealed class EfCoreCheckpointStore : ICheckpointStore, ICheckpointQuery, 
     public async ValueTask<bool> SaveUnderLeaseAsync(
         Checkpoint checkpoint, ThreadLease lease, long? expectedSequence = null, CancellationToken cancellationToken = default)
     {
+        Writable(ReadOnlyStores.Save);
         ThreadLeases.CheckThread(checkpoint, lease);
         if (_group is { } group)
         {
@@ -742,6 +874,7 @@ public sealed class EfCoreCheckpointStore : ICheckpointStore, ICheckpointQuery, 
     public async ValueTask<LeaseAttempt> TryAcquireLeaseAsync(
         string threadId, string owner, TimeSpan ttl, CancellationToken cancellationToken = default)
     {
+        Writable(ReadOnlyStores.AcquireLease);
         ThreadLeases.Check(owner, ttl);
         for (var attempt = 1; ; attempt++)
         {
@@ -780,6 +913,7 @@ public sealed class EfCoreCheckpointStore : ICheckpointStore, ICheckpointQuery, 
     public async ValueTask<ThreadLease?> RenewLeaseAsync(
         ThreadLease lease, TimeSpan ttl, CancellationToken cancellationToken = default)
     {
+        Writable(ReadOnlyStores.RenewLease);
         ArgumentNullException.ThrowIfNull(lease);
         ThreadLeases.CheckTtl(ttl);
         var expiresAt = _clock.GetUtcNow().ToUnixTimeMilliseconds() + ThreadLeases.Milliseconds(ttl);
@@ -793,6 +927,7 @@ public sealed class EfCoreCheckpointStore : ICheckpointStore, ICheckpointQuery, 
 
     public async ValueTask<bool> ReleaseLeaseAsync(ThreadLease lease, CancellationToken cancellationToken = default)
     {
+        Writable(ReadOnlyStores.ReleaseLease);
         ArgumentNullException.ThrowIfNull(lease);
         var released = await ReadAsync(
             "UPDATE checkpoint_leases SET owner = NULL, expires_at = NULL WHERE thread_id = $p1 AND token = $p2 RETURNING token",
@@ -865,6 +1000,8 @@ public sealed class EfCoreCheckpointStore : ICheckpointStore, ICheckpointQuery, 
     /// </summary>
     private BlobReader ReaderFor(string threadId) => _blobs is { } blobs
         ? (hashes, cancellationToken) => OffloadedBlobs.ReadAsync(blobs, threadId, hashes, cancellationToken)
+        : _readOnlyVersion is { } version && !ReadOnlyStores.HasOwnBlobs(version)
+        ? ReadOnlyStores.NoBlobs
         : async (hashes, cancellationToken) =>
         {
             var marks = string.Join(", ", hashes.Select((_, i) => $"$p{i + 2}"));
@@ -1057,6 +1194,7 @@ public sealed class EfCoreCheckpointStore : ICheckpointStore, ICheckpointQuery, 
         int limit = ThreadQuery.MaxLimit,
         CancellationToken cancellationToken = default)
     {
+        Writable(ReadOnlyStores.Purge);
         ThreadQuery.CheckLimit(limit);
         states ??= CheckpointRetention.Finished;
         if (states.Count == 0)

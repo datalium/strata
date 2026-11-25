@@ -225,7 +225,7 @@ pub async fn save_query_seed(store: &dyn CheckpointStore) {
     }
 }
 
-fn thread_query(json: &Value) -> ThreadQuery {
+pub fn thread_query(json: &Value) -> ThreadQuery {
     let mut query = ThreadQuery::default();
     if let Some(states) = json["states"].as_array() {
         query = query.with_states(

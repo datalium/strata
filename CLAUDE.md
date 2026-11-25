@@ -73,6 +73,7 @@ Both workflows (`.github/workflows/rust-ci.yml`, `dotnet-ci.yml`) run on pull re
 ```bash
 export STRATA_INTEROP_DIR=$PWD/cross-engine STRATA_TEST_POSTGRES_URL=postgres://strata:strata@localhost:5432/strata
 STRATA_INTEROP_STEP=write sh -c '(cd rust && cargo test -p datalium-strata-memory --test cross_engine) && dotnet test dotnet/tests/Datalium.Strata.Tests --filter "FullyQualifiedName~CrossEngineTests"'
+STRATA_INTEROP_STEP=read-older sh -c '(cd cli && cargo test --test cross_engine)'   # the CLI reads both version 1 databases read-only, before any engine migrates them
 STRATA_INTEROP_STEP=read  sh -c '(cd rust && cargo test -p datalium-strata-memory --test cross_engine) && dotnet test dotnet/tests/Datalium.Strata.Tests --filter "FullyQualifiedName~CrossEngineTests" && (cd cli && cargo test --test cross_engine)'
 ```
 Without `STRATA_INTEROP_DIR`, each engine's test reads only what it wrote, as part of its ordinary test run.

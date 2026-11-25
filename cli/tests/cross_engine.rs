@@ -6,17 +6,59 @@
 //! written, the resumed threads completed, and the current database's rows,
 //! deltas and offloaded values the .NET store wrote, decoded.
 //!
-//! It runs only as a step of `.github/workflows/cross-engine-ci.yml`, with
-//! `STRATA_INTEROP_DIR` and `STRATA_INTEROP_STEP=read` set (and
+//! Before that, in a step of its own (`STRATA_INTEROP_STEP=read-older`), the
+//! CLI reads both engines' older databases, at the checkpoints component's
+//! version 1, as they were written: read-only
+//! (`design/51-Read-Only-Store-Open.md`), so before any engine has migrated
+//! them, and leaving them as they were for the engines' steps after it.
+//!
+//! Each runs only as a step of `.github/workflows/cross-engine-ci.yml`, with
+//! `STRATA_INTEROP_DIR` and `STRATA_INTEROP_STEP` set (and
 //! `STRATA_TEST_POSTGRES_URL`); otherwise it says `SKIPPED` and passes: the CLI
 //! writes no databases of its own to read back.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde_json::Value;
 
 const OTHER: &str = "dotnet";
+
+/// The engines whose databases the `read-older` step reads: both, unless
+/// `STRATA_INTEROP_ENGINES` names fewer (to run one engine's write step and
+/// this one locally).
+fn engines() -> Vec<String> {
+    std::env::var("STRATA_INTEROP_ENGINES")
+        .ok()
+        .filter(|engines| !engines.is_empty())
+        .unwrap_or_else(|| "rust,dotnet".to_string())
+        .split(',')
+        .map(|engine| engine.trim().to_string())
+        .collect()
+}
+
+/// The interop directory, if this run is the cross-engine step `step`.
+fn step_dir(step: &str) -> Option<PathBuf> {
+    match std::env::var("STRATA_INTEROP_DIR") {
+        Ok(dir)
+            if !dir.is_empty() && std::env::var("STRATA_INTEROP_STEP").as_deref() == Ok(step) =>
+        {
+            Some(PathBuf::from(dir))
+        }
+        _ => {
+            eprintln!(
+                "SKIPPED: a step of the cross-engine job (STRATA_INTEROP_DIR, STRATA_INTEROP_STEP={step})"
+            );
+            None
+        }
+    }
+}
+
+/// `url` with its connections' `search_path` set to `schema`.
+fn in_schema(url: &str, schema: &str) -> String {
+    let separator = if url.contains('?') { '&' } else { '?' };
+    format!("{url}{separator}options=-c%20search_path%3D{schema}")
+}
 
 fn fixture(path: &str) -> Value {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -61,7 +103,31 @@ fn replay(storage: &str, thread_id: &str, sequence: &Value) -> Value {
     )
 }
 
+/// Each lifecycle fixture as the older database holds it once the reader
+/// has migrated and resumed it: listed, its first entry its fixture, the
+/// resumed threads completed and every other log one entry long.
 fn read_older(storage: &str) {
+    read_older_with(storage, |thread_id, entries, resumed| {
+        if resumed {
+            let last = entries.last().unwrap();
+            assert_eq!(last["status"], "completed", "{storage}: {thread_id}");
+        } else {
+            assert_eq!(entries.len(), 1, "{storage}: {thread_id}");
+        }
+    });
+}
+
+/// [`read_older`] as the writer left it, before any engine has resumed a
+/// thread: every log is its one fixture.
+fn read_older_as_written(storage: &str) {
+    read_older_with(storage, |thread_id, entries, _| {
+        assert_eq!(entries.len(), 1, "{storage}: {thread_id}");
+    });
+}
+
+/// Every lifecycle fixture listed and its first entry as written, then
+/// `logs` given each thread's whole log and whether the scenario resumes it.
+fn read_older_with(storage: &str, logs: impl Fn(&str, &[Value], bool)) {
     let scenario = fixture("cross-engine/scenario.json");
     let older = &scenario["older"];
     let fixtures = older["fixtures"].as_str().unwrap();
@@ -103,12 +169,7 @@ fn read_older(storage: &str) {
             expected["frozen_state"],
             "{storage}: {thread_id}"
         );
-        let last = entries.last().unwrap();
-        if resumed.contains(&thread_id.as_str()) {
-            assert_eq!(last["status"], "completed", "{storage}: {thread_id}");
-        } else {
-            assert_eq!(entries.len(), 1, "{storage}: {thread_id}");
-        }
+        logs(&thread_id, &entries, resumed.contains(&thread_id.as_str()));
     }
 }
 
@@ -144,25 +205,12 @@ fn read_current(storage: &str) {
 
 #[test]
 fn the_cli_reads_what_the_other_engine_wrote() {
-    let dir = match std::env::var("STRATA_INTEROP_DIR") {
-        Ok(dir)
-            if !dir.is_empty() && std::env::var("STRATA_INTEROP_STEP").as_deref() == Ok("read") =>
-        {
-            PathBuf::from(dir)
-        }
-        _ => {
-            eprintln!(
-                "SKIPPED: a step of the cross-engine job (STRATA_INTEROP_DIR, STRATA_INTEROP_STEP=read)"
-            );
-            return;
-        }
+    let Some(dir) = step_dir("read") else {
+        return;
     };
     let url = std::env::var("STRATA_TEST_POSTGRES_URL")
         .expect("a cross-engine step needs STRATA_TEST_POSTGRES_URL");
-    let separator = if url.contains('?') { '&' } else { '?' };
-    let schema = |database: &str| {
-        format!("{url}{separator}options=-c%20search_path%3Dstrata_interop_{OTHER}_{database}")
-    };
+    let schema = |database: &str| in_schema(&url, &format!("strata_interop_{OTHER}_{database}"));
     let sqlite = |database: &str| {
         dir.join(format!("{OTHER}-{database}.sqlite"))
             .to_str()
@@ -174,4 +222,74 @@ fn the_cli_reads_what_the_other_engine_wrote() {
     read_older(&schema("older"));
     read_current(&sqlite("current"));
     read_current(&schema("current"));
+}
+
+/// The SHA-256 of the file at `path`, as hex.
+fn sha256(path: &Path) -> String {
+    use sha2::Digest;
+    sha2::Sha256::digest(std::fs::read(path).unwrap())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// A Postgres schema's checkpoints component version, and whether it has a
+/// blob table.
+async fn postgres_layout(url: &str, schema: &str) -> (i64, bool) {
+    let client = datalium_strata_memory::postgres_store::connect(&in_schema(url, schema))
+        .await
+        .unwrap();
+    let version = client
+        .query_one(
+            "SELECT version FROM strata_schema_version WHERE component = 'checkpoints'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    let blobs = client
+        .query_one("SELECT to_regclass('checkpoint_blobs') IS NOT NULL", &[])
+        .await
+        .unwrap()
+        .get(0);
+    (version, blobs)
+}
+
+/// The `read-older` step, after both engines wrote and before either reads:
+/// the CLI reads each engine's older database at version 1, read-only, and
+/// leaves it as it was, the SQLite file byte for byte and the Postgres schema
+/// at version 1 with no blob table, for the engines to migrate next.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_cli_reads_the_older_databases_before_any_engine_migrates_them() {
+    let Some(dir) = step_dir("read-older") else {
+        return;
+    };
+    let url = std::env::var("STRATA_TEST_POSTGRES_URL")
+        .expect("a cross-engine step needs STRATA_TEST_POSTGRES_URL");
+    let written = fixture("cross-engine/scenario.json")["older"]["written_checkpoints_version"]
+        .as_i64()
+        .unwrap();
+    for engine in engines() {
+        let path = dir.join(format!("{engine}-older.sqlite"));
+        let before = sha256(&path);
+        read_older_as_written(path.to_str().unwrap());
+        assert_eq!(sha256(&path), before, "{}", path.display());
+        for suffix in ["-journal", "-wal", "-shm"] {
+            let beside = PathBuf::from(format!("{}{suffix}", path.display()));
+            assert!(!beside.exists(), "{}", beside.display());
+        }
+
+        let schema = format!("strata_interop_{engine}_older");
+        assert_eq!(
+            postgres_layout(&url, &schema).await,
+            (written, false),
+            "{schema} as written"
+        );
+        read_older_as_written(&in_schema(&url, &schema));
+        assert_eq!(
+            postgres_layout(&url, &schema).await,
+            (written, false),
+            "{schema} after the CLI read it"
+        );
+    }
 }

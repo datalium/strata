@@ -393,6 +393,6 @@ Built 2026-10-10 in both engines, every store adapter and the CLI's tests, in on
 - **Connection pooling in Rust's Postgres store**: still one connection, now replaced when it drops.
 - **Redis Cluster and Sentinel**, and TLS in the Rust adapters beyond what they had.
 - **Down migrations.** A database moves forward only.
-- **A `strata migrate` or `strata purge` CLI command**: the CLI stays read-only, apart from the migration any store runs when it opens a database.
+- **A `strata migrate` or `strata purge` CLI command**: the CLI is read-only. It opens every store with the read-only factories (`design/51-Read-Only-Store-Open.md`), so it never migrates.
 - **Retries in the Cloud store**: it has its own (`design/30`).
 - **Circuit breaking**: after `MaxAttempts` the call fails, and the next call starts again.

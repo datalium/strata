@@ -7,6 +7,8 @@
 //! `STRATA_TEST_REDIS_URL` (the repo's `docker-compose.yml`); unset, they say
 //! `SKIPPED` and pass, unless `STRATA_REQUIRE_BACKENDS=1` (set in CI).
 
+mod common;
+
 use std::process::Command;
 
 use datalium_strata::schema::Checkpoint;
@@ -50,10 +52,11 @@ fn seed() -> Vec<Checkpoint> {
     serde_json::from_value(cases["seed"].clone()).unwrap()
 }
 
-/// Seeds `storage` with the shared query seed, through the CLI's own store,
-/// and has `worker-2` hold one of its threads (`design/32-Thread-Leases.md`).
+/// Seeds `storage` with the shared query seed, through `strata-memory`'s
+/// writable store (the CLI itself only reads), and has `worker-2` hold one of
+/// its threads (`design/32-Thread-Leases.md`).
 async fn seed_storage(storage: &str) {
-    let opened = cli::store::open(storage).await.unwrap();
+    let opened = common::seed(storage).await;
     for checkpoint in seed() {
         opened.insert(&checkpoint).await.unwrap();
     }

@@ -9,6 +9,8 @@
 //! not a live cross-process pipe" pattern every interop proof since Phase 1
 //! has used, applied here to the CLI specifically.
 
+mod common;
+
 use std::process::Command;
 
 use datalium_strata::schema::Checkpoint;
@@ -33,7 +35,7 @@ async fn cli_replays_the_checkpoint_shape_both_runtimes_independently_produce() 
 
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("checkpoints.sqlite");
-    let pool = cli::store::open(db_path.to_str().unwrap()).await.unwrap();
+    let pool = common::seed(db_path.to_str().unwrap()).await;
     let sequence = pool.insert(&fixture).await.unwrap();
     drop(pool);
 
@@ -76,7 +78,7 @@ async fn cli_diffs_the_shared_fixture_against_a_second_checkpoint() {
 
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("checkpoints.sqlite");
-    let pool = cli::store::open(db_path.to_str().unwrap()).await.unwrap();
+    let pool = common::seed(db_path.to_str().unwrap()).await;
     let seq_a = pool.insert(&fixture).await.unwrap();
 
     let mut resumed = fixture.clone();

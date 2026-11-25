@@ -75,6 +75,7 @@ use serde_json::json;
 use crate::deltas::{self, CheckpointWriter, Decoded, Deltas, Encoding, depth_of};
 use crate::group_commit::record_saved;
 use crate::offload::{self, BlobStore, Offload};
+use crate::read_only;
 use crate::retry::{Failure, FaultHook, Retrier, SaveFate, StoreRetry, fate_of, fault_at};
 use crate::support::{from_millis, json_err};
 
@@ -381,6 +382,34 @@ static PURGE: LazyLock<redis::Script> = LazyLock::new(|| redis::Script::new(PURG
 static CANDIDATES: LazyLock<redis::Script> =
     LazyLock::new(|| redis::Script::new(CANDIDATES_SCRIPT));
 
+/// The line a read-only store puts before each script it runs on a read path
+/// (`GET_LEASE_SCRIPT`, `CANDIDATES_SCRIPT`), on Redis 7 and later
+/// (`design/51-Read-Only-Store-Open.md`, "Redis"): the script declares that
+/// it writes nothing, and is run with `EVALSHA_RO` / `EVAL_RO`, so a Redis
+/// user allowed only read commands can run it, and the server refuses a
+/// write inside it.
+pub const NO_WRITES_FLAG: &str = "#!lua flags=no-writes\n";
+
+/// A read path's script as a read-only store runs it on Redis 7 and later:
+/// [`NO_WRITES_FLAG`] then the script, and its SHA-1.
+struct NoWritesScript {
+    code: String,
+    hash: String,
+}
+
+impl NoWritesScript {
+    fn new(script: &str) -> Self {
+        let code = format!("{NO_WRITES_FLAG}{script}");
+        let hash = redis::Script::new(&code).get_hash().to_string();
+        Self { code, hash }
+    }
+}
+
+static GET_LEASE_NO_WRITES: LazyLock<NoWritesScript> =
+    LazyLock::new(|| NoWritesScript::new(GET_LEASE_SCRIPT));
+static CANDIDATES_NO_WRITES: LazyLock<NoWritesScript> =
+    LazyLock::new(|| NoWritesScript::new(CANDIDATES_SCRIPT));
+
 /// How many candidates one listing call examines at most, per page slot.
 const EXAMINED_PER_SLOT: usize = 10;
 
@@ -541,10 +570,14 @@ pub(crate) async fn connect(url: &str) -> Result<ConnectionManager, redis::Redis
     ConnectionManager::new_lazy_with_config(client, config)
 }
 
-/// [`connect`] under `retry`.
-async fn connect_retrying(url: &str, retry: &Retrier) -> Result<ConnectionManager, Failure> {
+/// [`connect`] under `retry`, counting a retry under `operation`.
+async fn connect_retrying(
+    url: &str,
+    retry: &Retrier,
+    operation: &'static str,
+) -> Result<ConnectionManager, Failure> {
     retry
-        .run("migrate", || async {
+        .run(operation, || async {
             connect(url).await.map_err(Failure::from)
         })
         .await
@@ -597,6 +630,12 @@ pub struct RedisCheckpointStore {
     writer: Option<CheckpointWriter>,
     /// Where offloaded values go when not in this Redis.
     blobs: Option<Arc<dyn BlobStore>>,
+    /// Opened with [`Self::connect_read_only`]: every write is refused, and
+    /// nothing is indexed.
+    read_only: bool,
+    /// Whether the read paths' scripts run as [`NO_WRITES_FLAG`] scripts,
+    /// with `EVALSHA_RO`: a read-only store on Redis 7 and later.
+    no_writes: bool,
 }
 
 /// What a save script did.
@@ -652,19 +691,112 @@ impl RedisCheckpointStore {
             .and_then(|offload| offload.blobs().cloned());
         let retry = Retrier::new(options.retry, "redis");
         let store = Self {
-            conn: connect_retrying(url, &retry).await?,
+            conn: connect_retrying(url, &retry, "migrate").await?,
             prefix: options.prefix,
             retry,
             finished_ttl,
             fault: options.fault,
             writer,
             blobs,
+            read_only: false,
+            no_writes: false,
         };
         store
             .retry
             .run("migrate", || store.ensure_indexed())
             .await?;
         Ok(store)
+    }
+
+    /// Connects to `url` without changing anything under the prefix
+    /// (`design/51-Read-Only-Store-Open.md`): it never scans, indexes or sets
+    /// the index marker, so a prefix without `{prefix}:threads:indexed` is
+    /// refused (nothing was written there, or no runtime from after the index
+    /// has connected to it). A listed thread whose list is gone is skipped,
+    /// and left in the index. On Redis 7 and later the two scripts reads run
+    /// declare [`NO_WRITES_FLAG`] and run with `EVALSHA_RO` / `EVAL_RO`, so a
+    /// Redis user allowed only read commands can use the store; on older
+    /// Redis, read-only is the store's promise, not the server's.
+    ///
+    /// Of `options`, the prefix, the retry policy and the offload's blob
+    /// store (where offloaded values are read from, checked to be there) are
+    /// used. The finished-thread ttl, deltas and the offload threshold have
+    /// no effect. Every write method, and [`Self::rebuild_index`], returns
+    /// `the store was opened read-only: <operation> is refused`.
+    pub async fn connect_read_only(
+        url: &str,
+        options: RedisStoreOptions,
+    ) -> Result<Self, CheckpointStoreError> {
+        let blobs = read_only::blobs(options.offload.as_ref())?;
+        let retry = Retrier::new(options.retry, "redis");
+        let mut store = Self {
+            conn: connect_retrying(url, &retry, "load").await?,
+            prefix: options.prefix,
+            retry,
+            finished_ttl: 0,
+            fault: options.fault,
+            writer: None,
+            blobs,
+            read_only: true,
+            no_writes: false,
+        };
+        let (indexed, no_writes) = store.retry.run("load", || store.read_only_check()).await?;
+        if !indexed {
+            return Err(read_only::redis_prefix_not_indexed(&store.prefix));
+        }
+        store.no_writes = no_writes;
+        Ok(store)
+    }
+
+    /// Whether the store was opened with [`Self::connect_read_only`], and so
+    /// refuses every write.
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
+    }
+
+    /// Whether the prefix is indexed, and whether the server runs scripts
+    /// with flags (Redis 7 and later). A server that won't say, as a user
+    /// allowed only read commands can't ask it, is taken to: only Redis 7
+    /// gives such a user scripts it can run.
+    async fn read_only_check(&self) -> Result<(bool, bool), Failure> {
+        let mut conn = self.conn.clone();
+        let indexed: bool = conn.exists(self.indexed_key()).await?;
+        let info: Result<String, redis::RedisError> = redis::cmd("INFO")
+            .arg("server")
+            .query_async(&mut conn)
+            .await;
+        let flags = match info {
+            Ok(info) => info
+                .lines()
+                .find_map(|line| line.strip_prefix("redis_version:"))
+                .and_then(|version| version.trim().split('.').next()?.parse::<u32>().ok())
+                .is_none_or(|major| major >= 7),
+            Err(_) => true,
+        };
+        Ok((indexed, flags))
+    }
+
+    /// Runs `script` with `EVALSHA_RO`, or with `EVAL_RO` and its code when
+    /// the server doesn't have it yet; `keys_and_args` adds the number of
+    /// keys, the keys and the arguments.
+    async fn eval_no_writes<T: redis::FromRedisValue>(
+        &self,
+        script: &NoWritesScript,
+        keys_and_args: impl Fn(&mut redis::Cmd),
+    ) -> Result<T, Failure> {
+        let mut conn = self.conn.clone();
+        let mut by_hash = redis::cmd("EVALSHA_RO");
+        by_hash.arg(&script.hash);
+        keys_and_args(&mut by_hash);
+        match by_hash.query_async(&mut conn).await {
+            Err(err) if err.code() == Some("NOSCRIPT") => {
+                let mut by_code = redis::cmd("EVAL_RO");
+                by_code.arg(&script.code);
+                keys_and_args(&mut by_code);
+                Ok(by_code.query_async(&mut conn).await?)
+            }
+            other => Ok(other?),
+        }
     }
 
     fn key(&self, thread_id: &str) -> String {
@@ -731,6 +863,9 @@ impl RedisCheckpointStore {
     /// drops threads whose lists are gone. Safe to run while others write;
     /// returns how many threads it indexed.
     pub async fn rebuild_index(&self) -> Result<usize, CheckpointStoreError> {
+        if self.read_only {
+            return Err(read_only::refused(read_only::REBUILD_INDEX));
+        }
         Ok(self.retry.run("migrate", || self.index_all()).await?)
     }
 
@@ -927,10 +1062,17 @@ impl RedisCheckpointStore {
     }
 
     async fn get_lease_once(&self, thread_id: &str) -> Result<Option<ThreadLease>, Failure> {
-        let held: Option<(i64, String, i64)> = GET_LEASE
-            .key(self.lease_key(thread_id))
-            .invoke_async(&mut self.conn.clone())
-            .await?;
+        let held: Option<(i64, String, i64)> = if self.no_writes {
+            self.eval_no_writes(&GET_LEASE_NO_WRITES, |cmd| {
+                cmd.arg(1).arg(self.lease_key(thread_id));
+            })
+            .await?
+        } else {
+            GET_LEASE
+                .key(self.lease_key(thread_id))
+                .invoke_async(&mut self.conn.clone())
+                .await?
+        };
         Ok(held
             .map(|(token, owner, expires_at)| {
                 Ok::<_, CheckpointStoreError>(ThreadLease {
@@ -1315,13 +1457,24 @@ impl RedisCheckpointStore {
             ),
             None => (String::new(), String::new()),
         };
-        let flat: Vec<String> = CANDIDATES
-            .key(set)
-            .arg(start_score)
-            .arg(start_thread)
-            .arg(count)
-            .invoke_async(&mut self.conn.clone())
-            .await?;
+        let flat: Vec<String> = if self.no_writes {
+            self.eval_no_writes(&CANDIDATES_NO_WRITES, |cmd| {
+                cmd.arg(1)
+                    .arg(set)
+                    .arg(&start_score)
+                    .arg(&start_thread)
+                    .arg(count);
+            })
+            .await?
+        } else {
+            CANDIDATES
+                .key(set)
+                .arg(start_score)
+                .arg(start_thread)
+                .arg(count)
+                .invoke_async(&mut self.conn.clone())
+                .await?
+        };
         Ok(scored(&flat)?)
     }
 
@@ -1417,8 +1570,10 @@ impl RedisCheckpointStore {
                 let json: Option<String> = redis::from_redis_value_ref(&reply[0])?;
                 let Some(json) = json else {
                     // The thread's list is gone (it expired, or was deleted):
-                    // take it out of the index.
-                    self.index_one(&candidate.1).await?;
+                    // take it out of the index, unless the store only reads.
+                    if !self.read_only {
+                        self.index_one(&candidate.1).await?;
+                    }
                     continue;
                 };
                 let length: i64 = redis::from_redis_value_ref(&reply[1])?;
@@ -1631,6 +1786,9 @@ fn scored(flat: &[String]) -> Result<Vec<(u64, String)>, CheckpointStoreError> {
 
 impl CheckpointStore for RedisCheckpointStore {
     fn save(&self, checkpoint: Checkpoint) -> BoxFuture<'_, Result<(), CheckpointStoreError>> {
+        if self.read_only {
+            return read_only::refuse(read_only::SAVE);
+        }
         Box::pin(self.save_now(checkpoint))
     }
 
@@ -1653,6 +1811,9 @@ impl CheckpointStore for RedisCheckpointStore {
         checkpoint: Checkpoint,
         expected_sequence: Option<i64>,
     ) -> BoxFuture<'_, Result<bool, CheckpointStoreError>> {
+        if self.read_only {
+            return read_only::refuse(read_only::SAVE);
+        }
         Box::pin(self.save_if_latest_now(checkpoint, expected_sequence))
     }
 
@@ -1662,6 +1823,9 @@ impl CheckpointStore for RedisCheckpointStore {
         owner: &'a str,
         ttl: Duration,
     ) -> BoxFuture<'a, Result<LeaseAttempt, CheckpointStoreError>> {
+        if self.read_only {
+            return read_only::refuse(read_only::ACQUIRE_LEASE);
+        }
         Box::pin(self.acquire_lease_now(thread_id, owner, ttl))
     }
 
@@ -1670,6 +1834,9 @@ impl CheckpointStore for RedisCheckpointStore {
         lease: &'a ThreadLease,
         ttl: Duration,
     ) -> BoxFuture<'a, Result<Option<ThreadLease>, CheckpointStoreError>> {
+        if self.read_only {
+            return read_only::refuse(read_only::RENEW_LEASE);
+        }
         Box::pin(self.renew_lease_now(lease, ttl))
     }
 
@@ -1677,6 +1844,9 @@ impl CheckpointStore for RedisCheckpointStore {
         &'a self,
         lease: &'a ThreadLease,
     ) -> BoxFuture<'a, Result<bool, CheckpointStoreError>> {
+        if self.read_only {
+            return read_only::refuse(read_only::RELEASE_LEASE);
+        }
         Box::pin(self.release_lease_now(lease))
     }
 
@@ -1693,6 +1863,9 @@ impl CheckpointStore for RedisCheckpointStore {
         lease: &'a ThreadLease,
         expected_sequence: Option<i64>,
     ) -> BoxFuture<'a, Result<LeasedSave, CheckpointStoreError>> {
+        if self.read_only {
+            return read_only::refuse(read_only::SAVE);
+        }
         Box::pin(self.save_under_lease_now(checkpoint, lease, expected_sequence))
     }
 }
@@ -1722,6 +1895,9 @@ impl CheckpointRetention for RedisCheckpointStore {
         states: &'a PurgeStates,
         limit: usize,
     ) -> BoxFuture<'a, Result<usize, CheckpointStoreError>> {
+        if self.read_only {
+            return read_only::refuse(read_only::PURGE);
+        }
         Box::pin(self.purge_now(older_than, states, limit))
     }
 }
@@ -1755,7 +1931,7 @@ impl RedisHistoryStore {
     ) -> Result<Self, HistoryStoreError> {
         let retry = Retrier::new(options.retry, "redis");
         Ok(Self {
-            conn: connect_retrying(url, &retry).await?,
+            conn: connect_retrying(url, &retry, "migrate").await?,
             prefix: options.prefix,
             retry,
         })

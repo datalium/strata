@@ -34,7 +34,7 @@ public sealed class CheckpointQueryContractTests
         }
     }
 
-    private static ThreadQuery Query(JsonNode json) => new()
+    internal static ThreadQuery Query(JsonNode json) => new()
     {
         States = json["states"]?.AsArray().Select(s => CheckpointThreadStates.Parse(s!.GetValue<string>())).ToHashSet(),
         Metadata = json["metadata"]?.AsObject().ToDictionary(p => p.Key, p => p.Value!.GetValue<string>())
@@ -50,7 +50,7 @@ public sealed class CheckpointQueryContractTests
     private static string StatusName(CheckpointStatus status) => status.ToString().ToLowerInvariant();
 
     /// <summary>A summary in the shape of <c>cases.json</c>'s <c>summaries</c>.</summary>
-    private static JsonNode SummaryJson(ThreadSummary summary)
+    internal static JsonNode SummaryJson(ThreadSummary summary)
     {
         var metadata = new JsonObject();
         foreach (var (key, value) in summary.Metadata)

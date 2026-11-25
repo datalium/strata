@@ -81,6 +81,7 @@ use crate::deltas::{
 };
 use crate::group_commit::{Flush, GroupCommit, Queue, Row as FlushRow, Verdict, record_saved};
 use crate::offload::{self, Blob, BlobStore, Offload};
+use crate::read_only;
 use crate::retry::{Failure, FaultHook, Retrier, SaveFate, StoreRetry, fate_of, fault_at};
 use crate::schema_versions::{self, SchemaStep};
 use crate::support::{
@@ -841,6 +842,10 @@ pub(crate) struct Link {
     /// Where the checkpoint store's offloaded values go when not in this
     /// database.
     blobs: Option<Arc<dyn BlobStore>>,
+    /// Whether the database has a `checkpoint_blobs` table to read offloaded
+    /// values from: one at the checkpoints component's version 1, opened
+    /// read-only, has none, and none of its rows can refer to one.
+    blob_table: bool,
 }
 
 impl Link {
@@ -855,13 +860,22 @@ impl Link {
         options: &PostgresStoreOptions,
         operation: &'static str,
     ) -> Result<Self, Failure> {
+        Self::connect_config(parse_config(url)?, options, operation).await
+    }
+
+    /// [`Self::connect_for`] with a parsed `config`.
+    async fn connect_config(
+        config: Config,
+        options: &PostgresStoreOptions,
+        operation: &'static str,
+    ) -> Result<Self, Failure> {
         if options.pool_size == 0 {
             return Err(Failure::fatal(
                 "a Postgres store's pool size must be at least 1",
             ));
         }
         let manager = Manager::from_config(
-            parse_config(url)?,
+            config,
             NoTls,
             ManagerConfig {
                 // A connection whose socket has closed is dropped and replaced
@@ -887,6 +901,7 @@ impl Link {
             fault: options.fault.clone(),
             writer: None,
             blobs: None,
+            blob_table: true,
         })
     }
 
@@ -899,6 +914,7 @@ impl Link {
             fault: options.fault.clone(),
             writer: None,
             blobs: None,
+            blob_table: true,
         }
     }
 
@@ -909,6 +925,7 @@ impl Link {
             fault: options.fault.clone(),
             writer: None,
             blobs: None,
+            blob_table: true,
         }
     }
 
@@ -966,6 +983,8 @@ impl Link {
         }
         let found = match &self.blobs {
             Some(blobs) => offload::read(&**blobs, thread_id, &wanted).await?,
+            // A database with no blob table has none to give.
+            None if !self.blob_table => Default::default(),
             None => {
                 let client = self.client().await?;
                 client
@@ -1374,6 +1393,46 @@ impl Link {
         let mut client = self.client().await?;
         migrate_component(&mut client, component, &steps, apply).await
     }
+
+    /// What a read-only open checks (`design/51-Read-Only-Store-Open.md`,
+    /// "PostgreSQL"): no advisory lock and no DDL, one query for which of the
+    /// version table and the log the connection's `search_path` resolves,
+    /// then the checkpoints component's version. Refuses a database with no
+    /// log, at version 0 or newer than this build. Returns the version.
+    async fn read_only_version(&self) -> Result<i64, Failure> {
+        let known = schema_versions::known(
+            schema_versions::BASELINE_VERSION,
+            &schema_versions::postgres_checkpoint_steps(&[]),
+        );
+        let client = self.client().await?;
+        let found = client
+            .query_one(
+                "SELECT to_regclass('strata_schema_version') IS NOT NULL,
+                        to_regclass('checkpoints') IS NOT NULL,
+                        to_regclass('checkpoint_threads') IS NOT NULL,
+                        current_database()::text",
+                &[],
+            )
+            .await?;
+        let (versions, log, database): (bool, bool, String) =
+            (found.get(0), found.get(1), found.get(3));
+        if !log {
+            return Err(read_only::no_strata_log(&database).into());
+        }
+        let version = if versions {
+            client
+                .query_opt(
+                    "SELECT version FROM strata_schema_version WHERE component = $1",
+                    &[&schema_versions::CHECKPOINTS],
+                )
+                .await?
+                .map_or(0, |row| row.get(0))
+        } else {
+            0
+        };
+        read_only::check_version(version, known)?;
+        Ok(version)
+    }
 }
 
 /// Postgres-backed [`CheckpointStore`]: the same append-only checkpoint log the
@@ -1388,6 +1447,8 @@ pub struct PostgresCheckpointStore {
     link: Arc<Link>,
     steps: Vec<SchemaStep>,
     group: Option<Queue>,
+    /// Opened with [`Self::connect_read_only`]: every write is refused.
+    read_only: bool,
 }
 
 impl PostgresCheckpointStore {
@@ -1421,6 +1482,62 @@ impl PostgresCheckpointStore {
         Self::prepared(Link::over(client, &options), options).await
     }
 
+    /// Connects to `url` without changing the database
+    /// (`design/51-Read-Only-Store-Open.md`): every session runs with
+    /// `default_transaction_read_only = on`, added to the URL's own
+    /// `options`, so the server itself refuses a write. That is also what
+    /// lets it work with a role that can only `SELECT`, and on a standby.
+    /// The database is checked before this returns, with no advisory lock and
+    /// no DDL: one with no `checkpoints` table in the connection's
+    /// `search_path` is refused, and so is one at the checkpoints component's
+    /// version 0 or at a version newer than this build's; versions 1 to this
+    /// build's are read. Nothing is migrated.
+    ///
+    /// Of `options`, the retry policy, the pool size and the offload's blob
+    /// store (where offloaded values are read from, checked to be there) are
+    /// used. Group commit, deltas, auto-migrate and the offload threshold
+    /// have no effect. Every write method, and [`Self::migrate`], returns
+    /// `the store was opened read-only: <operation> is refused`.
+    pub async fn connect_read_only(
+        url: &str,
+        options: PostgresStoreOptions,
+    ) -> Result<Self, CheckpointStoreError> {
+        let blobs = read_only::blobs(options.offload.as_ref())?;
+        let mut config = parse_config(url).map_err(Failure::from)?;
+        let session = match config.get_options() {
+            Some(own) if !own.trim().is_empty() => {
+                format!("{own} -c default_transaction_read_only=on")
+            }
+            _ => "-c default_transaction_read_only=on".to_string(),
+        };
+        config.options(&session);
+        let mut link = Link::connect_config(config, &options, "load").await?;
+        link.blobs = blobs;
+        let version = link.retry.run("load", || link.read_only_version()).await?;
+        link.blob_table = version >= 2;
+        Ok(Self {
+            link: Arc::new(link),
+            steps: Vec::new(),
+            group: None,
+            read_only: true,
+        })
+    }
+
+    /// Whether the store was opened with [`Self::connect_read_only`], and so
+    /// refuses every write.
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
+    }
+
+    /// For tests: runs `sql` on one of the store's own connections, past
+    /// every check of the store's, to show what the session itself allows.
+    #[doc(hidden)]
+    pub async fn execute_unguarded(&self, sql: &str) -> Result<(), CheckpointStoreError> {
+        let client = self.link.client().await?;
+        client.batch_execute(sql).await.map_err(Failure::from)?;
+        Ok(())
+    }
+
     async fn prepared(
         mut link: Link,
         options: PostgresStoreOptions,
@@ -1447,6 +1564,7 @@ impl PostgresCheckpointStore {
             link,
             steps: options.later_steps,
             group,
+            read_only: false,
         };
         store.prepare(options.auto_migrate).await?;
         Ok(store)
@@ -1462,6 +1580,9 @@ impl PostgresCheckpointStore {
     /// say (`design/34-Storage-Hardening.md`, "Migrations"): what a deploy
     /// step runs when the application's stores don't migrate.
     pub async fn migrate(&self) -> Result<(), CheckpointStoreError> {
+        if self.read_only {
+            return Err(read_only::refused(read_only::MIGRATE));
+        }
         self.prepare(true).await
     }
 
@@ -2568,6 +2689,9 @@ impl PostgresCheckpointStore {
 
 impl CheckpointStore for PostgresCheckpointStore {
     fn save(&self, checkpoint: Checkpoint) -> BoxFuture<'_, Result<(), CheckpointStoreError>> {
+        if self.read_only {
+            return read_only::refuse(read_only::SAVE);
+        }
         Box::pin(self.save_row(checkpoint))
     }
 
@@ -2590,6 +2714,9 @@ impl CheckpointStore for PostgresCheckpointStore {
         checkpoint: Checkpoint,
         expected_sequence: Option<i64>,
     ) -> BoxFuture<'_, Result<bool, CheckpointStoreError>> {
+        if self.read_only {
+            return read_only::refuse(read_only::SAVE);
+        }
         Box::pin(async move {
             let saved = self.insert_row(checkpoint, expected_sequence, None).await?;
             Ok(saved == LeasedSave::Saved)
@@ -2602,6 +2729,9 @@ impl CheckpointStore for PostgresCheckpointStore {
         owner: &'a str,
         ttl: Duration,
     ) -> BoxFuture<'a, Result<LeaseAttempt, CheckpointStoreError>> {
+        if self.read_only {
+            return read_only::refuse(read_only::ACQUIRE_LEASE);
+        }
         Box::pin(self.acquire_lease_row(thread_id, owner, ttl))
     }
 
@@ -2610,6 +2740,9 @@ impl CheckpointStore for PostgresCheckpointStore {
         lease: &'a ThreadLease,
         ttl: Duration,
     ) -> BoxFuture<'a, Result<Option<ThreadLease>, CheckpointStoreError>> {
+        if self.read_only {
+            return read_only::refuse(read_only::RENEW_LEASE);
+        }
         Box::pin(self.renew_lease_row(lease, ttl))
     }
 
@@ -2617,6 +2750,9 @@ impl CheckpointStore for PostgresCheckpointStore {
         &'a self,
         lease: &'a ThreadLease,
     ) -> BoxFuture<'a, Result<bool, CheckpointStoreError>> {
+        if self.read_only {
+            return read_only::refuse(read_only::RELEASE_LEASE);
+        }
         Box::pin(self.release_lease_row(lease))
     }
 
@@ -2633,6 +2769,9 @@ impl CheckpointStore for PostgresCheckpointStore {
         lease: &'a ThreadLease,
         expected_sequence: Option<i64>,
     ) -> BoxFuture<'a, Result<LeasedSave, CheckpointStoreError>> {
+        if self.read_only {
+            return read_only::refuse(read_only::SAVE);
+        }
         Box::pin(self.save_under_lease_row(checkpoint, lease, expected_sequence))
     }
 }
@@ -2662,6 +2801,9 @@ impl CheckpointRetention for PostgresCheckpointStore {
         states: &'a PurgeStates,
         limit: usize,
     ) -> BoxFuture<'a, Result<usize, CheckpointStoreError>> {
+        if self.read_only {
+            return read_only::refuse(read_only::PURGE);
+        }
         Box::pin(self.purge_rows(older_than, states, limit))
     }
 }

@@ -111,6 +111,15 @@ pub trait BlobStore: Send + Sync {
         &'a self,
         thread_id: &'a str,
     ) -> BoxFuture<'a, Result<(), CheckpointStoreError>>;
+
+    /// Checks that there is something to read from: what a read-only
+    /// checkpoint store calls when it opens
+    /// (`design/51-Read-Only-Store-Open.md`, "Blob directory"), so a store
+    /// that isn't there is the open's error, not a missing blob on the first
+    /// offloaded value. The default has nothing to check.
+    fn check_readable(&self) -> Result<(), CheckpointStoreError> {
+        Ok(())
+    }
 }
 
 /// Blobs in a map: for tests, and for a store in memory.
@@ -294,6 +303,18 @@ impl BlobStore for FileSystemBlobStore {
             })
             .await
         })
+    }
+
+    /// The root must be a directory: a read-only store refuses to open on
+    /// one that doesn't exist, and creates nothing.
+    fn check_readable(&self) -> Result<(), CheckpointStoreError> {
+        if self.root.is_dir() {
+            Ok(())
+        } else {
+            Err(crate::read_only::missing_blob_directory(
+                &self.root.display().to_string(),
+            ))
+        }
     }
 }
 
