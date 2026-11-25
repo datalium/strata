@@ -14,7 +14,7 @@
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5" />
     <!-- FakeTimeProvider, for the timer, retry, health and lease samples. -->
-    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.11.0" />
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.11.1" />
   </ItemGroup>
 
   <ItemGroup>
@@ -26,7 +26,7 @@
     <PackageReference Include="OpenTelemetry.Exporter.InMemory" Version="1.21.0" />
     <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.21.0" />
     <!-- Model clients and embedding generators, built but never called: the samples run on scripted models. -->
-    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.11.0" />
+    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.11.1" />
     <!-- sqlite-vec for the SQLite memory store, which the storage package doesn't bring. -->
     <!-- docs:begin guides/ai/long-term-memory/sqlite-vec -->
     <PackageReference Include="sqlite-vec" Version="0.1.7-alpha.2.1" ExcludeAssets="contentFiles" />
