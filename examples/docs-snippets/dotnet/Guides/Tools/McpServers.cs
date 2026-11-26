@@ -344,9 +344,14 @@ namespace Datalium.Strata.DocsSnippets.Guides.Tools.McpServers
             var configuration = here.Parent!.Name;
             var docsSnippets = here.Parent!.Parent!.Parent!.Parent!.FullName;
             var directory = Path.Combine(docsSnippets, "inventory-mcp", "bin", configuration, framework);
-            Assert.True(
-                File.Exists(Path.Combine(directory, OperatingSystem.IsWindows() ? "inventory-mcp.exe" : "inventory-mcp")),
-                $"inventory-mcp isn't built in {directory}");
+            var executable = OperatingSystem.IsWindows() ? "inventory-mcp.exe" : "inventory-mcp";
+            Assert.True(File.Exists(Path.Combine(directory, executable)), $"inventory-mcp isn't built in {directory}");
+
+            // On Linux, Process.Start looks for a bare command in this directory before the PATH. A copy of the apphost
+            // here, without its dll, would be started instead and exit at once (the csproj's Private="false" says why).
+            Assert.False(
+                File.Exists(Path.Combine(AppContext.BaseDirectory, executable)),
+                $"a copy of inventory-mcp is next to the tests in {AppContext.BaseDirectory}");
             Environment.SetEnvironmentVariable(
                 "PATH", directory + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH"));
             return directory;
