@@ -152,27 +152,117 @@ namespace Datalium.Strata.DocsSnippets.Guides.Persistence.ChooseAStore
 
 namespace Datalium.Strata.DocsSnippets.Guides.Persistence.ChooseAStore
 {
+    // docs:begin guides/persistence/choose-a-store/read-only
+    using Datalium.Strata.Interruption;
+    using Datalium.Strata.Storage.Memory;
+
+    // docs:hide
+    using System.Security.Cryptography;
+
+    public partial class ChooseAStoreSamples
+    {
+        [Fact]
+        public async Task OpenReadOnly()
+        {
+            using var file = new TempSqliteFile();
+            await StoreChecks.PauseAsync(file.Path, "refund-1042");
+            var before = Hash(file.Path);
+
+            // docs:show
+            var path = "strata.sqlite";
+            // docs:hide
+            path = file.Path;
+            // docs:show
+            using var store = await EfCoreCheckpointStore.OpenReadOnlyAsync(path);
+
+            var waiting = await store.ListThreadsAsync(new ThreadQuery
+            {
+                States = new HashSet<CheckpointThreadState> { CheckpointThreadState.Interrupted },
+            });
+            foreach (var thread in waiting.Threads)
+            {
+                Console.WriteLine($"{thread.ThreadId} waits at {thread.SuspendedNode}");
+            }
+
+            var latest = await store.LoadAsync("refund-1042");
+            try
+            {
+                await store.SaveAsync(latest!);
+            }
+            catch (InvalidOperationException refused)
+            {
+                Console.WriteLine(refused.Message);
+            }
+            // docs:end guides/persistence/choose-a-store/read-only
+
+            // It reads what the writable store wrote, and refuses the write with the message the page shows.
+            Assert.True(store.IsReadOnly);
+            var thread1042 = Assert.Single(waiting.Threads);
+            Assert.Equal(("refund-1042", "Prepare"), (thread1042.ThreadId, thread1042.SuspendedNode));
+            var refusedSave = await Assert.ThrowsAsync<InvalidOperationException>(async () => await store.SaveAsync(latest!));
+            Assert.Equal("the store was opened read-only: save is refused", refusedSave.Message);
+
+            // Opening, listing, loading and the refused save left the file as it was.
+            Assert.Equal(before, Hash(path));
+
+            // A missing file is refused, and not created.
+            var missing = path + ".missing";
+            var notThere = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => EfCoreCheckpointStore.OpenReadOnlyAsync(missing));
+            Assert.Equal($"no SQLite store at '{missing}': the file doesn't exist", notThere.Message);
+            Assert.False(File.Exists(missing));
+        }
+
+        /// <summary>The file's SHA-256, read while SQLite may still hold it open.</summary>
+        private static byte[] Hash(string path)
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            return SHA256.HashData(stream);
+        }
+    }
+}
+
+namespace Datalium.Strata.DocsSnippets.Guides.Persistence.ChooseAStore
+{
     using Datalium.Strata.Graph;
     using Datalium.Strata.Interruption;
     using Datalium.Strata.Memory;
+    using Datalium.Strata.Storage.Memory;
     using Microsoft.Data.Sqlite;
+    using Microsoft.EntityFrameworkCore;
 
     internal sealed record Refund(string Customer, decimal Amount, string Status);
 
     internal static class StoreChecks
     {
         /// <summary>
-        /// Runs a refund graph on <paramref name="checkpoints"/> until it waits, resumes it from the store, and keeps
-        /// a message in <paramref name="history"/>: what the page says every store does with the same graph code.
+        /// Runs the refund graph on a writable SQLite store at <paramref name="path"/> until it waits after
+        /// <c>Prepare</c>: the thread a read-only store then reads.
         /// </summary>
-        public static async Task PauseAndResumeAsync(ICheckpointStore checkpoints, IHistoryStore history, string threadId)
+        public static async Task PauseAsync(string path, string threadId)
         {
-            var graph = new StateGraph<Refund>()
+            using var writable = new EfCoreCheckpointStore(
+                new CheckpointDbContext(new DbContextOptionsBuilder<CheckpointDbContext>()
+                    .UseSqlite($"Data Source={path}").Options));
+            var paused = await RefundGraph().RunAsync(threadId, new Refund("acme", 120m, "new"), writable);
+            Assert.IsType<GraphExecutionResult<Refund>.Interrupted>(paused);
+        }
+
+        private static CompiledGraph<Refund> RefundGraph() =>
+            new StateGraph<Refund>()
                 .AddNode("Prepare", refund => refund with { Status = "awaiting approval" })
                 .AddInterruptBoundary("Prepare")
                 .AddNode("Pay", refund => refund with { Status = "paid" })
                 .AddEdge("Prepare", "Pay")
                 .Compile(new CompilationOptions { Checkpointing = CheckpointPolicy.EveryNode });
+
+        /// <summary>
+        /// Runs a refund graph on <paramref name="checkpoints"/> until it waits, resumes it from the store, and keeps
+        /// a message in <paramref name="history"/>: what the page says every store does with the same graph code.
+        /// </summary>
+        public static async Task PauseAndResumeAsync(ICheckpointStore checkpoints, IHistoryStore history, string threadId)
+        {
+            var graph = RefundGraph();
 
             var paused = await graph.RunAsync(threadId, new Refund("acme", 120m, "new"), checkpoints);
             Assert.Equal("Prepare", Assert.IsType<GraphExecutionResult<Refund>.Interrupted>(paused).SuspendedNode);

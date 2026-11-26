@@ -323,3 +323,94 @@ async fn host() -> Result<(), Box<dyn std::error::Error>> {
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn read_only() -> Result<(), Box<dyn std::error::Error>> {
+    let Some(url) = redis_url() else {
+        return Ok(());
+    };
+    let sandbox = Sandbox::new(&url, "read_only");
+    {
+        use std::sync::Arc;
+
+        use datalium_strata::graph::{CheckpointPolicy, CompileOptions, StateGraph};
+        use datalium_strata_memory::RedisStoreOptions;
+        use datalium_strata_memory::redis_store::RedisCheckpointStore;
+
+        #[derive(Clone, serde::Serialize, serde::Deserialize)]
+        struct Refund {
+            customer: String,
+            amount: f64,
+            status: String,
+        }
+
+        let writable = Arc::new(
+            RedisCheckpointStore::connect_with(
+                &url,
+                RedisStoreOptions::new().with_prefix(&sandbox.prefix),
+            )
+            .await?,
+        );
+        let graph = StateGraph::<Refund>::new()
+            .add_node("Prepare", |r: Refund| Refund {
+                status: "awaiting approval".into(),
+                ..r
+            })
+            .add_interrupt_boundary("Prepare")
+            .add_node("Pay", |r: Refund| Refund {
+                status: "paid".into(),
+                ..r
+            })
+            .add_edge("Prepare", "Pay")
+            .compile_with(CompileOptions::new().with_checkpointing(CheckpointPolicy::EveryNode))
+            .expect("the graph is valid");
+        let initial = Refund {
+            customer: "Ada".into(),
+            amount: 42.0,
+            status: "new".into(),
+        };
+        graph.run("refund-1", initial, writable).await;
+    }
+    let keys_before = sandbox.keys("acme");
+
+    // docs:begin guides/persistence/redis/read-only
+    use datalium_strata_memory::RedisStoreOptions;
+    use datalium_strata_memory::redis_store::RedisCheckpointStore;
+
+    let options = RedisStoreOptions::new().with_prefix("acme");
+    // docs:hide
+    let options = options.with_prefix(&sandbox.prefix);
+    // docs:show
+    let store = RedisCheckpointStore::connect_read_only("redis://localhost:6379", options).await?;
+    // docs:end guides/persistence/redis/read-only
+
+    use datalium_strata::checkpoint::CheckpointStore;
+    use datalium_strata::schema::CheckpointStatus;
+    assert!(store.is_read_only());
+    let latest = store.load("refund-1").await?.expect("the thread is there");
+    assert_eq!(latest.status, CheckpointStatus::Interrupted);
+    assert_eq!(
+        store.save(latest).await.expect_err("a save is refused").0,
+        "the store was opened read-only: save is refused"
+    );
+    assert_eq!(sandbox.keys("acme"), keys_before);
+
+    // A prefix nothing was written under is refused, and not indexed.
+    let unused = Sandbox::new(&url, "read_only_unused");
+    let refused = RedisCheckpointStore::connect_read_only(
+        &url,
+        RedisStoreOptions::new().with_prefix(&unused.prefix),
+    )
+    .await
+    .err()
+    .expect("an unindexed prefix is refused");
+    assert_eq!(
+        refused.0,
+        format!(
+            "no Strata thread index under prefix '{}': nothing was written there, or no current runtime has connected to it",
+            unused.prefix
+        )
+    );
+    assert!(unused.keys("acme").is_empty());
+    Ok(())
+}

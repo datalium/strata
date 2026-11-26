@@ -21,6 +21,7 @@ Each entry ends with the wire formats that version writes and reads. The rules b
     - Where the database can, it enforces this too. SQLite opens read-only with `PRAGMA query_only`, and Postgres sessions run with `default_transaction_read_only`, so a role that can only `SELECT`, or a standby, works. On Redis 7 and later the read scripts run with `EVAL_RO`, so a user denied writes and `EVAL` works.
     - `IsReadOnly` / `is_read_only()` says which kind a store is.
   - Writable stores are unchanged.
+  - **Docs samples** for the stratamesh.dev pages that show it (`/guides/persistence/choose-a-store/`, and the SQLite, Postgres and Redis guides), in `examples/docs-snippets/` in both languages, tested like the others.
 - **The `strata` CLI opens every store read-only**, so an inspector no longer changes what it inspects. For users this means:
   - A missing SQLite path is an error. It used to create an empty database and list nothing.
   - A database at `checkpoints` version 0, from before the version table, is refused, not migrated. Open it once with a runtime first.

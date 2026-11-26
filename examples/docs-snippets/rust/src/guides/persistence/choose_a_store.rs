@@ -162,6 +162,77 @@ async fn store_options() -> TestResult {
     Ok(())
 }
 
+#[tokio::test]
+async fn read_only() -> TestResult {
+    let file = TempFile::new("choose-a-store-read-only");
+    pause(&file.0, "refund-1042").await;
+    let before = std::fs::read(&file.0)?;
+
+    // docs:begin guides/persistence/choose-a-store/read-only
+    use datalium_strata::checkpoint::{CheckpointQuery, CheckpointStore, ThreadQuery, ThreadState};
+    use datalium_strata_memory::SqliteStoreOptions;
+    use datalium_strata_memory::checkpoint::SqliteCheckpointStore;
+
+    let path = "strata.sqlite";
+    // docs:hide
+    let path = file.instead_of(path);
+    // docs:show
+    let store = SqliteCheckpointStore::open_read_only(path, SqliteStoreOptions::new())?;
+
+    let query = ThreadQuery::default().with_states([ThreadState::Interrupted]);
+    let waiting = store.list_threads(&query).await?;
+    for thread in &waiting.threads {
+        println!(
+            "{} waits at {}",
+            thread.thread_id,
+            thread.suspended_node.as_deref().unwrap_or("-")
+        );
+    }
+
+    let latest = store
+        .load("refund-1042")
+        .await?
+        .expect("the thread is there");
+    if let Err(refused) = store.save(latest.clone()).await {
+        println!("{refused}");
+    }
+    // docs:end guides/persistence/choose-a-store/read-only
+
+    // It reads what the writable store wrote, and refuses the write with the
+    // message the page shows.
+    assert!(store.is_read_only());
+    assert_eq!(waiting.threads.len(), 1);
+    assert_eq!(waiting.threads[0].thread_id, "refund-1042");
+    assert_eq!(
+        waiting.threads[0].suspended_node.as_deref(),
+        Some("Prepare")
+    );
+    let refused = store
+        .save(latest)
+        .await
+        .expect_err("a read-only store refuses a save");
+    assert_eq!(refused.0, "the store was opened read-only: save is refused");
+    drop(store);
+
+    // Opening, listing, loading and the refused save left the file as it was.
+    assert_eq!(std::fs::read(&file.0)?, before);
+
+    // A missing file is refused, and not created.
+    let missing = file.0.with_extension("missing");
+    let not_there = SqliteCheckpointStore::open_read_only(&missing, SqliteStoreOptions::new())
+        .err()
+        .expect("a missing file is refused");
+    assert_eq!(
+        not_there.0,
+        format!(
+            "no SQLite store at '{}': the file doesn't exist",
+            missing.display()
+        )
+    );
+    assert!(!missing.exists());
+    Ok(())
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 struct Refund {
     customer: String,
@@ -177,19 +248,7 @@ async fn pause_and_resume(
     history: &dyn HistoryStore,
     thread_id: &str,
 ) -> TestResult {
-    let graph = StateGraph::<Refund>::new()
-        .add_node("Prepare", |r: Refund| Refund {
-            status: "awaiting approval".into(),
-            ..r
-        })
-        .add_interrupt_boundary("Prepare")
-        .add_node("Pay", |r: Refund| Refund {
-            status: "paid".into(),
-            ..r
-        })
-        .add_edge("Prepare", "Pay")
-        .compile_with(CompileOptions::new().with_checkpointing(CheckpointPolicy::EveryNode))
-        .expect("the graph is valid");
+    let graph = refund_graph();
 
     let initial = Refund {
         customer: "acme".into(),
@@ -224,6 +283,40 @@ async fn pause_and_resume(
     assert_eq!(messages.len(), 1);
     assert_eq!(&*messages[0].content, "Refund order 1042");
     Ok(())
+}
+
+/// The refund graph: `Prepare`, an interrupt boundary, then `Pay`.
+fn refund_graph() -> datalium_strata::graph::CompiledGraph<Refund> {
+    StateGraph::<Refund>::new()
+        .add_node("Prepare", |r: Refund| Refund {
+            status: "awaiting approval".into(),
+            ..r
+        })
+        .add_interrupt_boundary("Prepare")
+        .add_node("Pay", |r: Refund| Refund {
+            status: "paid".into(),
+            ..r
+        })
+        .add_edge("Prepare", "Pay")
+        .compile_with(CompileOptions::new().with_checkpointing(CheckpointPolicy::EveryNode))
+        .expect("the graph is valid")
+}
+
+/// Runs the refund graph on a writable SQLite store at `path` until it waits
+/// after `Prepare`: the thread a read-only store then reads.
+async fn pause(path: &std::path::Path, thread_id: &str) {
+    use datalium_strata_memory::checkpoint::SqliteCheckpointStore;
+
+    let writable = Arc::new(SqliteCheckpointStore::open(path).expect("the file opens"));
+    let initial = Refund {
+        customer: "acme".into(),
+        amount: 120.0,
+        status: "new".into(),
+    };
+    assert!(matches!(
+        refund_graph().run(thread_id, initial, writable).await,
+        GraphExecutionResult::Interrupted { .. }
+    ));
 }
 
 /// A SQLite file in the temp directory, deleted on drop.

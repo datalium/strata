@@ -317,6 +317,81 @@ struct Refund {
 }
 // docs:end guides/persistence/postgres/resume
 
+#[tokio::test]
+async fn read_only() -> TestResult {
+    let Some(sandbox) = PgSandbox::new("postgres_read_only").await else {
+        return Ok(());
+    };
+    {
+        let writable = Arc::new(
+            PostgresCheckpointStore::connect(sandbox.instead_of("postgres://"))
+                .await
+                .map_err(|e| e.0)?,
+        );
+        let initial = Refund {
+            customer: "acme".into(),
+            amount: 120.0,
+            status: "new".into(),
+        };
+        build().run("refund-1042", initial, writable).await;
+    }
+
+    // docs:begin guides/persistence/postgres/read-only
+    use datalium_strata_memory::PostgresStoreOptions;
+    use datalium_strata_memory::postgres_store::PostgresCheckpointStore;
+
+    let url = "postgres://reader:secret@replica.internal:5432/strata";
+    // docs:hide
+    let url = sandbox.instead_of(url);
+    // docs:show
+    let store = PostgresCheckpointStore::connect_read_only(url, PostgresStoreOptions::new())
+        .await
+        .map_err(|e| e.0)?;
+    // docs:end guides/persistence/postgres/read-only
+
+    assert!(store.is_read_only());
+    let latest = store
+        .load("refund-1042")
+        .await
+        .map_err(|e| e.0)?
+        .expect("the thread is there");
+    assert_eq!(
+        store.save(latest).await.expect_err("a save is refused").0,
+        "the store was opened read-only: save is refused"
+    );
+    assert_eq!(
+        store.migrate().await.expect_err("a migration is refused").0,
+        "the store was opened read-only: migrate is refused"
+    );
+    drop(store);
+
+    // A schema with no Strata tables is refused, by the database's name, and
+    // left empty.
+    let Some(empty) = PgSandbox::new("postgres_read_only_empty").await else {
+        return Ok(());
+    };
+    let base = backend_url("STRATA_TEST_POSTGRES_URL").expect("the sandbox has a URL");
+    let config: tokio_postgres::Config = base.parse()?;
+    let database = config
+        .get_dbname()
+        .expect("the URL names a database")
+        .to_string();
+    let refused = PostgresCheckpointStore::connect_read_only(
+        empty.instead_of("postgres://"),
+        PostgresStoreOptions::new(),
+    )
+    .await
+    .err()
+    .expect("a schema with no Strata log is refused");
+    assert_eq!(
+        refused.0,
+        format!("'{database}' has no Strata checkpoint log")
+    );
+    empty.remove().await;
+    sandbox.remove().await;
+    Ok(())
+}
+
 /// The refund graph from `/guides/production/hosting/`: `Prepare`, an
 /// interrupt boundary, then `Pay`.
 fn build() -> CompiledGraph<Refund> {
