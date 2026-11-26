@@ -196,13 +196,17 @@ jobs:
               uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
 
             # The token lasts 30 minutes and is revoked when the job ends. Trusted publishing works only for
-            # crates that already exist: the first version of a new crate is published by hand, by the
-            # release account, and its trusted publisher added before the next tag.
+            # crates that already exist, and a new crate can't be published before its first tag either: it
+            # pins its siblings at exactly this version, which isn't on crates.io until this job publishes it.
+            # So a new crate goes last in the list below. On its first tag this job fails on it; the release
+            # account then publishes it by hand from the tag, adds its trusted publisher, and re-runs the job
+            # (design/36-Packaging-And-Versioning.md, "A new package's first version").
             - name: Log In to Crates.io
               id: crates-io
               uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
 
-            # In dependency order: each crate depends on the ones before it at exactly this version.
+            # In dependency order: each crate depends on the ones before it at exactly this version. A new
+            # crate goes last (see above).
             #
             # crates.io limits how fast crates can be published, so a publish may get HTTP 429. A 429 waits
             # and tries again. A crate already on crates.io at this version is skipped, so the job can be
