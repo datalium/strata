@@ -108,7 +108,8 @@ using (var serverOutput = new AnonymousPipeClientStream(PipeDirection.Out, fromS
         }
     }
 
-    serverOutput.Dispose();
+    // Closing the client closed both of its ends, so the server reads to the end and returns, and its writer closes
+    // serverOutput. Disposing serverOutput first raced that writer's last flush (ObjectDisposedException).
     await serving;
 }
 
