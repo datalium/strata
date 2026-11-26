@@ -20,6 +20,7 @@ strata/
 │   ├── strata-cloud/       # Strata Cloud checkpoint store, decisions client and worker
 │   ├── strata-host/        # Hosting: drivers as tasks, settings, health probe
 │   ├── strata-ai/          # Model calls, agents, embeddings, long-term memory helper
+│   ├── strata-mcp/         # Strata's own MCP client: an MCP server's tools as Strata tools
 │   └── strata-bench/       # Benchmarks (not published)
 ├── dotnet/
 │   ├── Datalium.Strata.sln
@@ -28,6 +29,7 @@ strata/
 │   ├── src/Datalium.Strata.Cloud/             # Strata Cloud checkpoint store, decisions client and worker
 │   ├── src/Datalium.Strata.Hosting/           # AddStrata(): registration, settings, hosted drivers, health, OpenTelemetry
 │   ├── src/Datalium.Strata.AI/                # Model calls, agents, embeddings, long-term memory helper
+│   ├── src/Datalium.Strata.Mcp/               # Strata's own MCP client: an MCP server's tools as Strata tools
 │   ├── src/Datalium.Strata.SourceGenerators/  # Roslyn generator for [StrataTool], shipped inside Datalium.Strata
 │   ├── benchmarks/Datalium.Strata.Benchmarks/ # BenchmarkDotNet; in the solution, not a package
 │   ├── tests/Datalium.Strata.Tests/
@@ -63,7 +65,7 @@ dotnet test dotnet/Datalium.Strata.sln --configuration Release --no-build
 **Packaging** (`design/36-Packaging-And-Versioning.md`)
 ```bash
 .github/scripts/versions.sh                                     # Print the version; fail if the manifests disagree
-.github/scripts/pack-smoke.sh                                   # Pack the five NuGet packages, check them, run an app built on them alone
+.github/scripts/pack-smoke.sh                                   # Pack the six NuGet packages, check them, run an app built on them alone
 (cd rust && cargo package --workspace --exclude strata-bench)   # Package each published crate and build it from its package
 ```
 

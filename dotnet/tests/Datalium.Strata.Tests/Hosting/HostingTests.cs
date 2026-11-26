@@ -1210,9 +1210,10 @@ public class HostingTests
         Assert.Contains(activities, activity => activity.Source.Name == StrataTelemetry.Name);
         Assert.Contains(metrics, metric => metric.MeterName == StrataTelemetry.Name);
 
-        Assert.Equal([StrataTelemetry.Name, StrataCloudTelemetry.Name], StrataInstrumentation.ActivitySourceNames);
+        // The MCP client's name is a string in the hosting package, which doesn't reference it (design/50-MCP-Client.md).
+        Assert.Equal([StrataTelemetry.Name, StrataCloudTelemetry.Name, Datalium.Strata.Mcp.McpTelemetry.Name], StrataInstrumentation.ActivitySourceNames);
         Assert.Equal(
-            [StrataTelemetry.Name, StorageTelemetry.Name, StrataCloudTelemetry.Name, StrataHostingTelemetry.Name],
+            [StrataTelemetry.Name, StorageTelemetry.Name, StrataCloudTelemetry.Name, StrataHostingTelemetry.Name, Datalium.Strata.Mcp.McpTelemetry.Name],
             StrataInstrumentation.MeterNames);
     }
 }

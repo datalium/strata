@@ -1,0 +1,278 @@
+{
+  "description": "How an MCP `CallToolResult` becomes the text a Strata tool returns (design/50-MCP-Client.md, \"Results\"), replayed by both engines' result tests (rust/strata-mcp/src/result.rs, dotnet/tests/Datalium.Strata.Tests/Mcp/McpResultTests.cs). Not a wire format: it pins what the model sees across the two engines. The rule: `structuredContent`, when present and not null, is its JSON, compact (compared as JSON, since Rust's serde_json orders an object's keys and .NET keeps the server's order). Otherwise each content block in order, joined by a blank line (`\\n\\n`): `text` as is; an embedded `resource` with `text`, that text; a `resource_link`, `[resource: <name> <uri>]` (`[resource: <uri>]` without a name); `image`, `audio` and an embedded `resource` with `blob`, `[<mimeType>, <size> KB, not shown]`, where the size is the decoded byte count (the base64 characters other than `=` and whitespace, times 3, divided by 4, rounded down) divided by 1024 and rounded up, and the mime type is `application/octet-stream` when absent; a block of any other type, `[<type> content, not shown]`. No content at all is the empty string. With `isError: true` the text is `{\"error\":\"<text>\"}`, written as the agent writes refusals (compact, the text escaped as a JSON string), and an empty text is `the tool reported an error without a message`. `json: true` means `text` is compared as JSON.",
+  "cases": [
+    {
+      "name": "one text block",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "72°F and sunny"
+          }
+        ]
+      },
+      "text": "72°F and sunny"
+    },
+    {
+      "name": "text blocks are joined by a blank line",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "first"
+          },
+          {
+            "type": "text",
+            "text": "second"
+          }
+        ]
+      },
+      "text": "first\n\nsecond"
+    },
+    {
+      "name": "no content",
+      "result": {
+        "content": []
+      },
+      "text": ""
+    },
+    {
+      "name": "content absent",
+      "result": {},
+      "text": ""
+    },
+    {
+      "name": "structuredContent wins over the text",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"temperature\": 22.5}"
+          }
+        ],
+        "structuredContent": {
+          "temperature": 22.5,
+          "conditions": "Partly cloudy"
+        }
+      },
+      "text": "{\"temperature\":22.5,\"conditions\":\"Partly cloudy\"}",
+      "json": true
+    },
+    {
+      "name": "null structuredContent is no structuredContent",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "plain"
+          }
+        ],
+        "structuredContent": null
+      },
+      "text": "plain"
+    },
+    {
+      "name": "an image is a placeholder",
+      "result": {
+        "content": [
+          {
+            "type": "image",
+            "data": "iVBORw0KGgo=",
+            "mimeType": "image/png"
+          }
+        ]
+      },
+      "text": "[image/png, 1 KB, not shown]"
+    },
+    {
+      "name": "the size is rounded up to the next KB",
+      "result": {
+        "content": [
+          {
+            "type": "audio",
+            "data": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "mimeType": "audio/wav"
+          }
+        ]
+      },
+      "text": "[audio/wav, 2 KB, not shown]"
+    },
+    {
+      "name": "empty data is 0 KB",
+      "result": {
+        "content": [
+          {
+            "type": "image",
+            "data": "",
+            "mimeType": "image/gif"
+          }
+        ]
+      },
+      "text": "[image/gif, 0 KB, not shown]"
+    },
+    {
+      "name": "no mime type",
+      "result": {
+        "content": [
+          {
+            "type": "image",
+            "data": "AAAA"
+          }
+        ]
+      },
+      "text": "[application/octet-stream, 1 KB, not shown]"
+    },
+    {
+      "name": "a resource link",
+      "result": {
+        "content": [
+          {
+            "type": "resource_link",
+            "uri": "file:///project/src/main.rs",
+            "name": "main.rs",
+            "mimeType": "text/x-rust"
+          }
+        ]
+      },
+      "text": "[resource: main.rs file:///project/src/main.rs]"
+    },
+    {
+      "name": "a resource link without a name",
+      "result": {
+        "content": [
+          {
+            "type": "resource_link",
+            "uri": "file:///a.txt"
+          }
+        ]
+      },
+      "text": "[resource: file:///a.txt]"
+    },
+    {
+      "name": "an embedded text resource is its text",
+      "result": {
+        "content": [
+          {
+            "type": "resource",
+            "resource": {
+              "uri": "file:///a.txt",
+              "mimeType": "text/plain",
+              "text": "hello"
+            }
+          }
+        ]
+      },
+      "text": "hello"
+    },
+    {
+      "name": "an embedded binary resource is a placeholder",
+      "result": {
+        "content": [
+          {
+            "type": "resource",
+            "resource": {
+              "uri": "file:///a.pdf",
+              "mimeType": "application/pdf",
+              "blob": "JVBERi0xLjQ="
+            }
+          }
+        ]
+      },
+      "text": "[application/pdf, 1 KB, not shown]"
+    },
+    {
+      "name": "an unknown block type",
+      "result": {
+        "content": [
+          {
+            "type": "hologram",
+            "data": "x"
+          }
+        ]
+      },
+      "text": "[hologram content, not shown]"
+    },
+    {
+      "name": "mixed blocks keep their order",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Here is the chart:"
+          },
+          {
+            "type": "image",
+            "data": "iVBORw0KGgo=",
+            "mimeType": "image/png"
+          },
+          {
+            "type": "resource_link",
+            "uri": "https://example.com/data.csv",
+            "name": "data.csv"
+          }
+        ]
+      },
+      "text": "Here is the chart:\n\n[image/png, 1 KB, not shown]\n\n[resource: data.csv https://example.com/data.csv]"
+    },
+    {
+      "name": "base64 with whitespace",
+      "result": {
+        "content": [
+          {
+            "type": "image",
+            "data": "AAAA\nAAAA",
+            "mimeType": "image/png"
+          }
+        ]
+      },
+      "text": "[image/png, 1 KB, not shown]"
+    },
+    {
+      "name": "isError wraps the text",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Invalid departure date: must be in the future."
+          }
+        ],
+        "isError": true
+      },
+      "text": "{\"error\":\"Invalid departure date: must be in the future.\"}"
+    },
+    {
+      "name": "isError escapes the text",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "bad \"quote\"\nnext line"
+          }
+        ],
+        "isError": true
+      },
+      "text": "{\"error\":\"bad \\\"quote\\\"\\nnext line\"}"
+    },
+    {
+      "name": "isError without content",
+      "result": {
+        "content": [],
+        "isError": true
+      },
+      "text": "{\"error\":\"the tool reported an error without a message\"}"
+    },
+    {
+      "name": "isError false is a result",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ok"
+          }
+        ],
+        "isError": false
+      },
+      "text": "ok"
+    }
+  ]
+}

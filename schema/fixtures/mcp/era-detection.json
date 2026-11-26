@@ -1,0 +1,544 @@
+{
+  "description": "Which era a server speaks, from the answer to Strata's `server/discover` probe (MCP 2026-07-28, \"Backward Compatibility\" in the stdio and Streamable HTTP transports; design/50-MCP-Client.md, \"Opening a connection\"), replayed by both engines' era tests. Strata's modern version is `2026-07-28`. Its legacy versions, newest first, are `2025-11-25`, `2025-06-18`, `2025-03-26`, and on stdio only `2024-11-05`. The recognized modern errors are `-32020` (HeaderMismatch), `-32021` (MissingRequiredClientCapability) and `-32022` (UnsupportedProtocolVersion). A stdio `answer` is a JSON-RPC `result`, an `error`, or `silence` (no answer within the probe timeout). An HTTP `answer` is a status, a content type and a body. `outcome.era` is `modern` (with the version used from then on), `legacy` (with the version Strata sends in `initialize`: the newest legacy version it knows that the server listed, else `2025-11-25`), or `fail` (with words the error message `contains`). The rule: a `DiscoverResult` is modern when it lists `2026-07-28`, else legacy with a version it lists, else a failure naming both lists. `-32022` is modern but not this version: legacy with a version from `data.supported`, else a failure naming both lists. `-32020` and `-32021` fail, with their code. On stdio, any other error, and silence, are legacy. On HTTP, a 2xx body is a JSON-RPC message (JSON, or the last event of an SSE stream) read as on stdio, except that silence can't happen; 401 and 403 fail as unauthorized, with the status; 5xx fail, with the status; any other 4xx is legacy, unless its body is a JSON-RPC message with a recognized modern error, which is read as on stdio.",
+  "cases": [
+    {
+      "name": "a modern server",
+      "transport": "stdio",
+      "answer": {
+        "result": {
+          "resultType": "complete",
+          "supportedVersions": [
+            "2026-07-28"
+          ],
+          "capabilities": {
+            "tools": {}
+          },
+          "_meta": {
+            "io.modelcontextprotocol/serverInfo": {
+              "name": "fixture",
+              "version": "1.0.0"
+            }
+          }
+        }
+      },
+      "outcome": {
+        "era": "modern",
+        "version": "2026-07-28"
+      }
+    },
+    {
+      "name": "a dual-era server",
+      "transport": "stdio",
+      "answer": {
+        "result": {
+          "resultType": "complete",
+          "supportedVersions": [
+            "2026-07-28",
+            "2025-11-25"
+          ],
+          "capabilities": {
+            "tools": {}
+          },
+          "_meta": {
+            "io.modelcontextprotocol/serverInfo": {
+              "name": "fixture",
+              "version": "1.0.0"
+            }
+          }
+        }
+      },
+      "outcome": {
+        "era": "modern",
+        "version": "2026-07-28"
+      }
+    },
+    {
+      "name": "a discover result without the modern version",
+      "transport": "stdio",
+      "answer": {
+        "result": {
+          "resultType": "complete",
+          "supportedVersions": [
+            "2025-03-26",
+            "2025-06-18"
+          ],
+          "capabilities": {
+            "tools": {}
+          },
+          "_meta": {
+            "io.modelcontextprotocol/serverInfo": {
+              "name": "fixture",
+              "version": "1.0.0"
+            }
+          }
+        }
+      },
+      "outcome": {
+        "era": "legacy",
+        "version": "2025-06-18"
+      }
+    },
+    {
+      "name": "a discover result with no version Strata knows",
+      "transport": "stdio",
+      "answer": {
+        "result": {
+          "resultType": "complete",
+          "supportedVersions": [
+            "2099-01-01"
+          ],
+          "capabilities": {
+            "tools": {}
+          },
+          "_meta": {
+            "io.modelcontextprotocol/serverInfo": {
+              "name": "fixture",
+              "version": "1.0.0"
+            }
+          }
+        }
+      },
+      "outcome": {
+        "era": "fail",
+        "contains": [
+          "2099-01-01",
+          "2026-07-28"
+        ]
+      }
+    },
+    {
+      "name": "unsupported version, with a legacy one supported",
+      "transport": "stdio",
+      "answer": {
+        "error": {
+          "code": -32022,
+          "message": "Unsupported protocol version",
+          "data": {
+            "supported": [
+              "2025-11-25"
+            ],
+            "requested": "2026-07-28"
+          }
+        }
+      },
+      "outcome": {
+        "era": "legacy",
+        "version": "2025-11-25"
+      }
+    },
+    {
+      "name": "unsupported version, the newest known is chosen",
+      "transport": "stdio",
+      "answer": {
+        "error": {
+          "code": -32022,
+          "message": "Unsupported protocol version",
+          "data": {
+            "supported": [
+              "2025-03-26",
+              "2025-06-18",
+              "2099-01-01"
+            ]
+          }
+        }
+      },
+      "outcome": {
+        "era": "legacy",
+        "version": "2025-06-18"
+      }
+    },
+    {
+      "name": "unsupported version, nothing in common",
+      "transport": "stdio",
+      "answer": {
+        "error": {
+          "code": -32022,
+          "message": "Unsupported protocol version",
+          "data": {
+            "supported": [
+              "2099-01-01"
+            ]
+          }
+        }
+      },
+      "outcome": {
+        "era": "fail",
+        "contains": [
+          "2099-01-01",
+          "2026-07-28"
+        ]
+      }
+    },
+    {
+      "name": "unsupported version without data",
+      "transport": "stdio",
+      "answer": {
+        "error": {
+          "code": -32022,
+          "message": "Unsupported protocol version"
+        }
+      },
+      "outcome": {
+        "era": "fail",
+        "contains": [
+          "2026-07-28"
+        ]
+      }
+    },
+    {
+      "name": "a missing client capability",
+      "transport": "stdio",
+      "answer": {
+        "error": {
+          "code": -32021,
+          "message": "Missing required client capability: sampling"
+        }
+      },
+      "outcome": {
+        "era": "fail",
+        "contains": [
+          "-32021",
+          "sampling"
+        ]
+      }
+    },
+    {
+      "name": "a header mismatch",
+      "transport": "stdio",
+      "answer": {
+        "error": {
+          "code": -32020,
+          "message": "Header mismatch"
+        }
+      },
+      "outcome": {
+        "era": "fail",
+        "contains": [
+          "-32020"
+        ]
+      }
+    },
+    {
+      "name": "method not found is legacy",
+      "transport": "stdio",
+      "answer": {
+        "error": {
+          "code": -32601,
+          "message": "Method not found"
+        }
+      },
+      "outcome": {
+        "era": "legacy",
+        "version": "2025-11-25"
+      }
+    },
+    {
+      "name": "invalid params is legacy",
+      "transport": "stdio",
+      "answer": {
+        "error": {
+          "code": -32602,
+          "message": "Invalid params"
+        }
+      },
+      "outcome": {
+        "era": "legacy",
+        "version": "2025-11-25"
+      }
+    },
+    {
+      "name": "any other error is legacy",
+      "transport": "stdio",
+      "answer": {
+        "error": {
+          "code": -32000,
+          "message": "Server not initialized"
+        }
+      },
+      "outcome": {
+        "era": "legacy",
+        "version": "2025-11-25"
+      }
+    },
+    {
+      "name": "silence is legacy",
+      "transport": "stdio",
+      "answer": {
+        "silence": true
+      },
+      "outcome": {
+        "era": "legacy",
+        "version": "2025-11-25"
+      }
+    },
+    {
+      "name": "2024-11-05 on stdio",
+      "transport": "stdio",
+      "answer": {
+        "error": {
+          "code": -32022,
+          "message": "Unsupported protocol version",
+          "data": {
+            "supported": [
+              "2024-11-05"
+            ]
+          }
+        }
+      },
+      "outcome": {
+        "era": "legacy",
+        "version": "2024-11-05"
+      }
+    },
+    {
+      "name": "a modern server, JSON",
+      "transport": "http",
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "body": "{\"jsonrpc\": \"2.0\", \"id\": 1, \"result\": {\"resultType\": \"complete\", \"supportedVersions\": [\"2026-07-28\"], \"capabilities\": {\"tools\": {}}, \"_meta\": {\"io.modelcontextprotocol/serverInfo\": {\"name\": \"fixture\", \"version\": \"1.0.0\"}}}}"
+      },
+      "outcome": {
+        "era": "modern",
+        "version": "2026-07-28"
+      }
+    },
+    {
+      "name": "a modern server, SSE",
+      "transport": "http",
+      "answer": {
+        "status": 200,
+        "contentType": "text/event-stream",
+        "body": ": hello\n\ndata: {\"jsonrpc\": \"2.0\", \"id\": 1, \"result\": {\"resultType\": \"complete\", \"supportedVersions\": [\"2026-07-28\"], \"capabilities\": {\"tools\": {}}, \"_meta\": {\"io.modelcontextprotocol/serverInfo\": {\"name\": \"fixture\", \"version\": \"1.0.0\"}}}}\n\n"
+      },
+      "outcome": {
+        "era": "modern",
+        "version": "2026-07-28"
+      }
+    },
+    {
+      "name": "400 with unsupported version",
+      "transport": "http",
+      "answer": {
+        "status": 400,
+        "contentType": "application/json",
+        "body": "{\"jsonrpc\": \"2.0\", \"id\": 1, \"error\": {\"code\": -32022, \"message\": \"Unsupported protocol version\", \"data\": {\"supported\": [\"2025-11-25\", \"2025-06-18\"]}}}"
+      },
+      "outcome": {
+        "era": "legacy",
+        "version": "2025-11-25"
+      }
+    },
+    {
+      "name": "400 with nothing in common",
+      "transport": "http",
+      "answer": {
+        "status": 400,
+        "contentType": "application/json",
+        "body": "{\"jsonrpc\": \"2.0\", \"id\": 1, \"error\": {\"code\": -32022, \"message\": \"Unsupported protocol version\", \"data\": {\"supported\": [\"2099-01-01\"]}}}"
+      },
+      "outcome": {
+        "era": "fail",
+        "contains": [
+          "2099-01-01"
+        ]
+      }
+    },
+    {
+      "name": "400 with a header mismatch",
+      "transport": "http",
+      "answer": {
+        "status": 400,
+        "contentType": "application/json",
+        "body": "{\"jsonrpc\": \"2.0\", \"id\": 1, \"error\": {\"code\": -32020, \"message\": \"Header mismatch: Mcp-Method\"}}"
+      },
+      "outcome": {
+        "era": "fail",
+        "contains": [
+          "-32020"
+        ]
+      }
+    },
+    {
+      "name": "400 with a missing capability",
+      "transport": "http",
+      "answer": {
+        "status": 400,
+        "contentType": "application/json",
+        "body": "{\"jsonrpc\": \"2.0\", \"id\": 1, \"error\": {\"code\": -32021, \"message\": \"Missing required client capability\"}}"
+      },
+      "outcome": {
+        "era": "fail",
+        "contains": [
+          "-32021"
+        ]
+      }
+    },
+    {
+      "name": "400 with an empty body",
+      "transport": "http",
+      "answer": {
+        "status": 400,
+        "contentType": "text/plain",
+        "body": ""
+      },
+      "outcome": {
+        "era": "legacy",
+        "version": "2025-11-25"
+      }
+    },
+    {
+      "name": "400 with text",
+      "transport": "http",
+      "answer": {
+        "status": 400,
+        "contentType": "text/plain",
+        "body": "Bad Request: No valid session ID provided"
+      },
+      "outcome": {
+        "era": "legacy",
+        "version": "2025-11-25"
+      }
+    },
+    {
+      "name": "400 with another JSON-RPC error",
+      "transport": "http",
+      "answer": {
+        "status": 400,
+        "contentType": "application/json",
+        "body": "{\"jsonrpc\": \"2.0\", \"id\": 1, \"error\": {\"code\": -32000, \"message\": \"Bad Request: Server not initialized\"}}"
+      },
+      "outcome": {
+        "era": "legacy",
+        "version": "2025-11-25"
+      }
+    },
+    {
+      "name": "404 with method not found",
+      "transport": "http",
+      "answer": {
+        "status": 404,
+        "contentType": "application/json",
+        "body": "{\"jsonrpc\": \"2.0\", \"id\": 1, \"error\": {\"code\": -32601, \"message\": \"Method not found\"}}"
+      },
+      "outcome": {
+        "era": "legacy",
+        "version": "2025-11-25"
+      }
+    },
+    {
+      "name": "405",
+      "transport": "http",
+      "answer": {
+        "status": 405,
+        "contentType": "text/plain",
+        "body": ""
+      },
+      "outcome": {
+        "era": "legacy",
+        "version": "2025-11-25"
+      }
+    },
+    {
+      "name": "200 with a JSON-RPC error that isn't modern",
+      "transport": "http",
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "body": "{\"jsonrpc\": \"2.0\", \"id\": 1, \"error\": {\"code\": -32601, \"message\": \"Method not found\"}}"
+      },
+      "outcome": {
+        "era": "legacy",
+        "version": "2025-11-25"
+      }
+    },
+    {
+      "name": "200 with unsupported version",
+      "transport": "http",
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "body": "{\"jsonrpc\": \"2.0\", \"id\": 1, \"error\": {\"code\": -32022, \"message\": \"Unsupported protocol version\", \"data\": {\"supported\": [\"2025-03-26\"]}}}"
+      },
+      "outcome": {
+        "era": "legacy",
+        "version": "2025-03-26"
+      }
+    },
+    {
+      "name": "2024-11-05 isn't spoken on HTTP",
+      "transport": "http",
+      "answer": {
+        "status": 400,
+        "contentType": "application/json",
+        "body": "{\"jsonrpc\": \"2.0\", \"id\": 1, \"error\": {\"code\": -32022, \"message\": \"Unsupported protocol version\", \"data\": {\"supported\": [\"2024-11-05\"]}}}"
+      },
+      "outcome": {
+        "era": "fail",
+        "contains": [
+          "2024-11-05"
+        ]
+      }
+    },
+    {
+      "name": "401",
+      "transport": "http",
+      "answer": {
+        "status": 401,
+        "contentType": "text/plain",
+        "body": ""
+      },
+      "outcome": {
+        "era": "fail",
+        "contains": [
+          "401"
+        ]
+      }
+    },
+    {
+      "name": "403",
+      "transport": "http",
+      "answer": {
+        "status": 403,
+        "contentType": "text/plain",
+        "body": ""
+      },
+      "outcome": {
+        "era": "fail",
+        "contains": [
+          "403"
+        ]
+      }
+    },
+    {
+      "name": "500",
+      "transport": "http",
+      "answer": {
+        "status": 500,
+        "contentType": "text/plain",
+        "body": "boom"
+      },
+      "outcome": {
+        "era": "fail",
+        "contains": [
+          "500"
+        ]
+      }
+    },
+    {
+      "name": "503",
+      "transport": "http",
+      "answer": {
+        "status": 503,
+        "contentType": "text/plain",
+        "body": ""
+      },
+      "outcome": {
+        "era": "fail",
+        "contains": [
+          "503"
+        ]
+      }
+    }
+  ]
+}

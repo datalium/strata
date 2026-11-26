@@ -1,0 +1,124 @@
+{
+  "description": "How a value becomes an `Mcp-Name` or `Mcp-Param-{Name}` header value on modern Streamable HTTP (MCP 2026-07-28, \"Value Encoding\"; design/50-MCP-Client.md, \"Streamable HTTP\"), replayed by both engines' header tests. A string is used as is, an integer in decimal, a boolean as `true` / `false`. The text is sent plain when every character is visible ASCII or a space (0x20-0x7E), it has no leading or trailing space, and it doesn't both start with `=?base64?` and end with `?=`. Otherwise it is `=?base64?<standard Base64, padded, of the UTF-8>?=`. A tab is encoded too: the spec names control characters as a reason to encode. `value` is the JSON value; `header` is the encoded text, or null when the value gives no header (null, a number with a fraction or an exponent, an integer outside JavaScript's safe range, an array or an object).",
+  "cases": [
+    {
+      "name": "plain ASCII",
+      "value": "us-west1",
+      "header": "us-west1"
+    },
+    {
+      "name": "non-ASCII",
+      "value": "Hello, 世界",
+      "header": "=?base64?SGVsbG8sIOS4lueVjA==?="
+    },
+    {
+      "name": "leading and trailing spaces",
+      "value": " padded ",
+      "header": "=?base64?IHBhZGRlZCA=?="
+    },
+    {
+      "name": "a newline",
+      "value": "line1\nline2",
+      "header": "=?base64?bGluZTEKbGluZTI=?="
+    },
+    {
+      "name": "the sentinel shape",
+      "value": "=?base64?literal?=",
+      "header": "=?base64?PT9iYXNlNjQ/bGl0ZXJhbD89?="
+    },
+    {
+      "name": "only the prefix is plain",
+      "value": "=?base64?abc",
+      "header": "=?base64?abc"
+    },
+    {
+      "name": "inner spaces are plain",
+      "value": "a b  c",
+      "header": "a b  c"
+    },
+    {
+      "name": "a tab",
+      "value": "a\tb",
+      "header": "=?base64?YQli?="
+    },
+    {
+      "name": "a carriage return",
+      "value": "a\rb",
+      "header": "=?base64?YQ1i?="
+    },
+    {
+      "name": "DEL",
+      "value": "ab",
+      "header": "=?base64?YX9i?="
+    },
+    {
+      "name": "the empty string",
+      "value": "",
+      "header": ""
+    },
+    {
+      "name": "a URI",
+      "value": "file:///projects/myapp/config.json",
+      "header": "file:///projects/myapp/config.json"
+    },
+    {
+      "name": "a positive integer",
+      "value": 42,
+      "header": "42"
+    },
+    {
+      "name": "a negative integer",
+      "value": -7,
+      "header": "-7"
+    },
+    {
+      "name": "the largest safe integer",
+      "value": 9007199254740991,
+      "header": "9007199254740991"
+    },
+    {
+      "name": "the smallest safe integer",
+      "value": -9007199254740991,
+      "header": "-9007199254740991"
+    },
+    {
+      "name": "past the safe range",
+      "value": 9007199254740992,
+      "header": null
+    },
+    {
+      "name": "a fraction",
+      "value": 1.5,
+      "header": null
+    },
+    {
+      "name": "true",
+      "value": true,
+      "header": "true"
+    },
+    {
+      "name": "false",
+      "value": false,
+      "header": "false"
+    },
+    {
+      "name": "null",
+      "value": null,
+      "header": null
+    },
+    {
+      "name": "an array",
+      "value": [
+        "a"
+      ],
+      "header": null
+    },
+    {
+      "name": "an object",
+      "value": {
+        "a": 1
+      },
+      "header": null
+    }
+  ]
+}

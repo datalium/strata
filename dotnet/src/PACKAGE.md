@@ -17,8 +17,9 @@ dotnet add package Datalium.Strata.Hosting --version 0.9.0
 | `Datalium.Strata.Cloud` | The Strata Cloud checkpoint store, decisions client and decision worker. |
 | `Datalium.Strata.Hosting` | `services.AddStrata()`: registration, settings from configuration, the driver hosted services, health checks, OpenTelemetry wiring. Depends on the other four. |
 | `Datalium.Strata.AI` | Model calls and agents from a node: any `Microsoft.Extensions.AI` `IChatClient`, streamed into the run, observed as run events and GenAI telemetry, provider faults retried with their `Retry-After`; the model node; `StrataAgent`, the model ↔ tool loop through a `ToolRegistry`, with typed answers validated and repaired; model routes; embeddings and the long-term memory helper. |
+| `Datalium.Strata.Mcp` | Strata's own Model Context Protocol client: an MCP server's tools, over stdio or Streamable HTTP, as Strata tools in a `ToolRegistry`. Reference it beside `Datalium.Strata.Hosting`. |
 
-An application usually references `Datalium.Strata.Hosting` alone: it brings the other four packages, and the source generator with them.
+An application usually references `Datalium.Strata.Hosting` alone: it brings the engine, the stores, the Cloud client and the AI package, and the source generator with them. `Datalium.Strata.Mcp` is referenced on its own, by an application that uses MCP servers.
 
 ## Links
 

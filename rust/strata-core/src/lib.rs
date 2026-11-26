@@ -79,8 +79,10 @@ pub enum StrataError {
         tool: String,
         reason: String,
     },
-    /// A tool middleware failed the call for a reason of its own: a timeout,
-    /// an unreachable policy backend (`design/23-Tool-Middleware.md`).
+    /// A tool call failed for a reason with a message: a middleware's own
+    /// (a timeout, an unreachable policy backend, `design/23-Tool-Middleware.md`),
+    /// or a tool that knows why it failed (an MCP server's protocol or
+    /// transport failure, `design/50-MCP-Client.md`).
     ToolCallFailed {
         tool: String,
         message: String,

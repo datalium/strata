@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <Import Project="..\Package.props" />
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Datalium.Strata.Mcp</RootNamespace>
+    <Description>Strata's own Model Context Protocol client for Datalium Strata: an MCP server's tools, over stdio or Streamable HTTP, as Strata tools in a ToolRegistry.</Description>
+  </PropertyGroup>
+
+  <!-- design/50-MCP-Client.md: Strata implements the MCP spec itself. The shared framework (System.Text.Json,
+       HttpClient, System.Net.ServerSentEvents, Process) and the engine: no MCP SDK, nothing else. -->
+  <ItemGroup>
+    <!-- PrivateAssets without "analyzers": NuGet hides a dependency's analyzers from a package's own consumers
+         by default, and the engine's source generator has to reach them
+         (design/36-Packaging-And-Versioning.md). -->
+    <ProjectReference Include="..\Datalium.Strata\Datalium.Strata.csproj" PrivateAssets="contentfiles;build" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The era rule, the result mapping, the header encoding and the SSE reading, for the tests that replay
+         the shared fixtures in schema/fixtures/mcp/. -->
+    <InternalsVisibleTo Include="Datalium.Strata.Tests" />
+  </ItemGroup>
+
+</Project>

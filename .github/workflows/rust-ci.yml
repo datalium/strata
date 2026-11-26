@@ -174,7 +174,7 @@ jobs:
                   if-no-files-found: error
 
     # design/36-Packaging-And-Versioning.md, "What a tag does": every v* tag, preview or release, publishes
-    # the six crates to crates.io and then creates the GitHub release with the CLI. Crates first, so a
+    # the seven crates to crates.io and then creates the GitHub release with the CLI. Crates first, so a
     # failed publish leaves no public release.
     #
     # Trusted publishing: crates.io trusts this workflow (rust-ci.yml) in the "release" environment of
@@ -242,7 +242,8 @@ jobs:
                       datalium-strata-memory \
                       datalium-strata-cloud \
                       datalium-strata-host \
-                      datalium-strata-ai; do
+                      datalium-strata-ai \
+                      datalium-strata-mcp; do
                       publish "$crate"
                   done
 

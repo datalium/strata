@@ -78,13 +78,13 @@ jobs:
                   dotnet run --no-build --configuration Release --project dotnet/benchmarks/Datalium.Strata.Benchmarks -- profile --quick
                   dotnet run --no-build --configuration Release --project dotnet/benchmarks/Datalium.Strata.Benchmarks -- --filter '*' --job Dry
 
-            # Packs the five packages, checks what is in them, and builds and runs an application that knows
+            # Packs the six packages, checks what is in them, and builds and runs an application that knows
             # Strata only as those packages.
             - name: Pack and Smoke-Test the Packages
               run: .github/scripts/pack-smoke.sh
 
     # design/36-Packaging-And-Versioning.md, "What a tag does": every v* tag, preview or release, publishes
-    # the five packages to nuget.org.
+    # the six packages to nuget.org.
     #
     # Ownership comes from the nuget.org trusted publishing policy, owned by the Datalium organization. The
     # policy names this repository, this file (dotnet-ci.yml: don't rename it) and the "release" environment.

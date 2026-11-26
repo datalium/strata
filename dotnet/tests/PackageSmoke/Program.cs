@@ -1,9 +1,12 @@
+using System.IO.Pipes;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Datalium.Strata.AI;
 using Datalium.Strata.Graph;
 using Datalium.Strata.Hosting;
 using Datalium.Strata.Interruption;
+using Datalium.Strata.Mcp;
 using Datalium.Strata.Tools;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
@@ -85,8 +88,68 @@ if (!new PricingTools().GetToolsManifest().Contains("price_order", StringCompari
     return 1;
 }
 
+// The MCP client (design/50-MCP-Client.md), from Datalium.Strata.Mcp alone: a server of this file's own over two pipes,
+// probed, listed and called through a registry.
+using (var toServer = new AnonymousPipeServerStream(PipeDirection.Out))
+using (var serverInput = new AnonymousPipeClientStream(PipeDirection.In, toServer.ClientSafePipeHandle))
+using (var fromServer = new AnonymousPipeServerStream(PipeDirection.In))
+using (var serverOutput = new AnonymousPipeClientStream(PipeDirection.Out, fromServer.ClientSafePipeHandle))
+{
+    var serving = SmokeMcpServer.RunAsync(serverInput, serverOutput);
+    var mcpTools = new ToolRegistry();
+    await using (var mcp = await McpClient.ConnectAsync(McpServer.Streams(fromServer, toServer)))
+    {
+        mcpTools.Register(mcp.ToolProvider(new McpToolOptions { Prefix = "smoke." }));
+        var sum = await mcpTools.DispatchToolAsync("smoke.add", """{"a":2,"b":3}""");
+        if (mcp.ProtocolVersion != "2026-07-28" || sum != """{"sum":5}""")
+        {
+            Console.Error.WriteLine($"the MCP tool did not add: {mcp.ProtocolVersion}, {sum}");
+            return 1;
+        }
+    }
+
+    serverOutput.Dispose();
+    await serving;
+}
+
 Console.WriteLine($"Datalium.Strata.Hosting {typeof(StrataRunner<>).Assembly.GetName().Version}: packed, restored, generated and run.");
 return 0;
+
+/// <summary>
+/// An MCP server of this file's own, over stdio's framing (one JSON-RPC message per line): it speaks 2026-07-28 and has
+/// one tool, <c>add</c>, which answers with structured content.
+/// </summary>
+public static class SmokeMcpServer
+{
+    public static async Task RunAsync(Stream input, Stream output)
+    {
+        using var reader = new StreamReader(input);
+        await using var writer = new StreamWriter(output) { AutoFlush = true, NewLine = "\n" };
+        while (await reader.ReadLineAsync() is { } line)
+        {
+            var request = JsonNode.Parse(line)!;
+            if (request["id"] is not { } id)
+            {
+                continue;
+            }
+
+            JsonNode result = request["method"]!.GetValue<string>() switch
+            {
+                "server/discover" => new JsonObject { ["supportedVersions"] = new JsonArray("2026-07-28"), ["capabilities"] = new JsonObject() },
+                "tools/list" => JsonNode.Parse("""{"tools":[{"name":"add","description":"Adds.","inputSchema":{"type":"object"}}]}""")!,
+                _ => new JsonObject
+                {
+                    ["content"] = new JsonArray(),
+                    ["structuredContent"] = new JsonObject
+                    {
+                        ["sum"] = request["params"]!["arguments"]!["a"]!.GetValue<int>() + request["params"]!["arguments"]!["b"]!.GetValue<int>(),
+                    },
+                },
+            };
+            await writer.WriteLineAsync(new JsonObject { ["jsonrpc"] = "2.0", ["id"] = id.DeepClone(), ["result"] = result }.ToJsonString());
+        }
+    }
+}
 
 /// <summary>What the smoke graph prices.</summary>
 public sealed record Order(int Quantity, int Total, string Note);
