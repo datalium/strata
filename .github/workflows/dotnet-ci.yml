@@ -84,7 +84,8 @@ jobs:
               run: .github/scripts/pack-smoke.sh
 
     # design/36-Packaging-And-Versioning.md, "What a tag does": every v* tag, preview or release, publishes
-    # the six packages to nuget.org.
+    # the six packages to nuget.org. A new package's first version may need an upload by hand after the tag:
+    # design/36, "A new package's first version".
     #
     # Ownership comes from the nuget.org trusted publishing policy, owned by the Datalium organization. The
     # policy names this repository, this file (dotnet-ci.yml: don't rename it) and the "release" environment.

@@ -103,6 +103,21 @@ Inside this repository nothing changes: projects reference each other by path, a
 
 Before either, the version check runs with the tag, and the test jobs must pass.
 
+### A new package's first version
+
+*(Added 2026-11-26, before `1.0.0-rc.1`, the first release with new packages since `0.9.0-preview.1`.)*
+
+A tag publishes only packages that already exist on the registry, because both publish jobs log in through trusted publishing. A new package's first version needs a few steps by hand, **after** the tag, not before it:
+
+- **crates.io.** A trusted-publishing token can publish only crates that exist. A new crate can't go up before the tag either: it pins its siblings at exactly the tag's version (`datalium-strata = "=1.0.0-rc.1"`), and crates.io refuses a crate whose dependencies aren't published yet. So a new crate goes **last** in `rust-ci.yml`'s publish list, and on its first tag:
+  1. Push the tag. The job publishes the existing crates in dependency order, then fails on the new one. The GitHub release step after it doesn't run yet.
+  2. The release account publishes the new crate by hand, from a clean checkout of the tag (`cargo publish -p <crate>`). It uses a short-lived token scoped to that crate (`publish-new`), revoked afterwards.
+  3. On the crate's crates.io settings page, it adds the trusted publisher (`datalium/strata`, `rust-ci.yml`, environment `release`) and ticks **Require trusted publishing for all new versions**, as for the other crates.
+  4. Re-run the failed job. The publish step skips each crate already at the version, and the job goes on to the GitHub release.
+- **nuget.org.** The push uses `--skip-duplicate`, so a package already at the version is skipped. Whether the short-lived key may push a new package ID depends on the scope of the trusted publishing policy, which nuget.org's documentation doesn't spell out. If the policy allows new packages, the tag pushes the new one with the rest. If not, upload it by hand after the tag: take it from the tag's `pack-smoke.sh` output, set the owner to `Datalium`, and re-run the job if a package pushed after it was missed. Not before the tag: it would depend on a version of `Datalium.Strata` that isn't on nuget.org yet.
+
+The first packages that need this are `datalium-strata-mcp` and `Datalium.Strata.Mcp`, in `1.0.0-rc.1` (`design/50`).
+
 ### Proving a package works
 
 Packing can break without any test noticing: a missing file, a dependency that didn't make it into the manifest, a generator that isn't where the compiler looks. So every pull request:
@@ -191,7 +206,7 @@ Built 2026-10-11, as specified above. Nothing was published: no tag was pushed a
 - **Version and metadata:** `dotnet/Directory.Build.props` (the version, authors, licence, repository; `IsPackable=false` by default), `dotnet/src/Package.props` (what makes a project a package: docs, symbols, readme), imported by the four library projects, each with a `Description`. `rust/Cargo.toml`: `[workspace.package]` and `[workspace.dependencies]`; each crate inherits (`version.workspace = true`, …) and takes its siblings from the workspace. `cli/Cargo.toml`: the version, `publish = false`.
 - **The generator in the package:** a packed `None` item in `Datalium.Strata.csproj`; `PrivateAssets="contentfiles;build"` on the engine reference in the other three, and on the hosting package's references to the stores and the Cloud client.
 - **Scripts:** `.github/scripts/versions.sh` and `.github/scripts/pack-smoke.sh`. `dotnet/tests/PackageSmoke/` (project, `nuget.config`, `Program.cs`).
-- **Workflows:** both check the version on every run (with the tag, on a tag). `dotnet-ci.yml` runs `pack-smoke.sh` in the test job, and on every `v*` tag, preview or not, pushes what it packed to nuget.org. `rust-ci.yml` runs `cargo package --workspace` in the test job, and on every `v*` tag publishes the six crates in order, then creates the GitHub release with the CLI binaries and `SHA256SUMS.txt` (a pre-release for a preview tag). Both publish jobs run in the `release` environment and use trusted publishing: no registry key or token is stored.
+- **Workflows:** both check the version on every run (with the tag, on a tag). `dotnet-ci.yml` runs `pack-smoke.sh` in the test job, and on every `v*` tag, preview or not, pushes what it packed to nuget.org. `rust-ci.yml` runs `cargo package --workspace` in the test job, and on every `v*` tag publishes the crates in order (seven since `datalium-strata-mcp`; a new crate's first version is in "A new package's first version"), then creates the GitHub release with the CLI binaries and `SHA256SUMS.txt` (a pre-release for a preview tag). Both publish jobs run in the `release` environment and use trusted publishing: no registry key or token is stored.
 - **Documents:** `CHANGELOG.md`; `schema/README.md`, "Compatibility"; the README's "Status".
 
 **Tests:**
