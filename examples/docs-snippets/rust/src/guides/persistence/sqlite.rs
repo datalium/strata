@@ -162,6 +162,102 @@ async fn host_settings() -> TestResult {
     Ok(())
 }
 
+#[tokio::test]
+async fn read_only() -> TestResult {
+    let file = TempFile::new();
+    let blobs_dir = file.path().with_extension("blobs");
+    std::fs::create_dir(&blobs_dir)?;
+    {
+        let writable = Arc::new(SqliteCheckpointStore::open(file.path())?);
+        let initial = Refund {
+            customer: "acme".into(),
+            amount: 120.0,
+            status: "new".into(),
+        };
+        build().run("refund-1042", initial, writable).await;
+    }
+
+    // docs:begin guides/persistence/sqlite/read-only
+    use std::sync::Arc;
+
+    use datalium_strata_memory::checkpoint::SqliteCheckpointStore;
+    use datalium_strata_memory::{FileSystemBlobStore, Offload, SqliteStoreOptions};
+
+    let path = "strata.db";
+    let blobs = "blobs";
+    // docs:hide
+    let path = file.instead_of(path);
+    let blobs = blobs_dir.to_str().unwrap_or(blobs);
+    // docs:show
+    // Where the application puts offloaded values. The write options have no effect here.
+    let options = SqliteStoreOptions::new()
+        .with_offload(Offload::new().with_blobs(Arc::new(FileSystemBlobStore::new(blobs))));
+    let store = SqliteCheckpointStore::open_read_only(path, options)?;
+    // docs:end guides/persistence/sqlite/read-only
+
+    use datalium_strata::checkpoint::CheckpointStore;
+    use datalium_strata::schema::CheckpointStatus;
+    assert!(store.is_read_only());
+    let latest = store
+        .load("refund-1042")
+        .await?
+        .expect("the thread is there");
+    assert_eq!(latest.status, CheckpointStatus::Interrupted);
+    drop(store);
+
+    // The refusals the page shows. A blob directory that doesn't exist:
+    let no_blobs = blobs_dir.join("missing");
+    let refused = SqliteCheckpointStore::open_read_only(
+        path,
+        SqliteStoreOptions::new()
+            .with_offload(Offload::new().with_blobs(Arc::new(FileSystemBlobStore::new(&no_blobs)))),
+    )
+    .err()
+    .expect("a missing blob directory is refused");
+    assert_eq!(
+        refused.0,
+        format!("blob directory '{}' doesn't exist", no_blobs.display())
+    );
+
+    // A file that a newer version of Strata wrote, and one from before the
+    // version table (version 0).
+    let refusal = |path: &Path| {
+        SqliteCheckpointStore::open_read_only(path, SqliteStoreOptions::new())
+            .err()
+            .expect("the file is refused")
+            .0
+    };
+    let execute = |path: &Path, sql: &str| {
+        rusqlite::Connection::open(path)
+            .and_then(|connection| connection.execute_batch(sql))
+            .expect("the statement runs");
+    };
+    execute(
+        path,
+        "UPDATE strata_schema_version SET version = 3 WHERE component = 'checkpoints'",
+    );
+    assert_eq!(
+        refusal(path),
+        "database is at checkpoints schema version 3, and this build knows 2: upgrade the runtime"
+    );
+    execute(path, "DROP TABLE strata_schema_version");
+    assert_eq!(
+        refusal(path),
+        "database is at checkpoints schema version 0, and a read-only store reads 1 to 2: open it once with a runtime to migrate it"
+    );
+
+    // A SQLite file that isn't a Strata store.
+    let other = TempFile::new();
+    execute(other.path(), "CREATE TABLE notes (body TEXT)");
+    assert_eq!(
+        refusal(other.path()),
+        format!("'{}' has no Strata checkpoint log", other.path().display())
+    );
+
+    std::fs::remove_dir_all(&blobs_dir)?;
+    Ok(())
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 struct Refund {
     customer: String,

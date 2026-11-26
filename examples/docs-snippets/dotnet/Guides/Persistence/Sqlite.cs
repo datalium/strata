@@ -188,3 +188,94 @@ namespace Datalium.Strata.DocsSnippets.Guides.Persistence.Sqlite
         }
     }
 }
+
+namespace Datalium.Strata.DocsSnippets.Guides.Persistence.Sqlite
+{
+    // docs:begin guides/persistence/sqlite/read-only
+    using Datalium.Strata.Storage;
+    using Datalium.Strata.Storage.Memory;
+
+    // docs:hide
+    using Datalium.Strata.Interruption;
+    using Microsoft.Data.Sqlite;
+    using Microsoft.EntityFrameworkCore;
+
+    public partial class SqliteSamples
+    {
+        [Fact]
+        public async Task OpenReadOnly()
+        {
+            using var file = new TempSqliteFile();
+            var blobs = Directory.CreateTempSubdirectory("docs-sqlite-blobs-");
+            try
+            {
+                using (var writable = new EfCoreCheckpointStore(
+                    new CheckpointDbContext(new DbContextOptionsBuilder<CheckpointDbContext>()
+                        .UseSqlite($"Data Source={file.Path}").Options)))
+                {
+                    await Refunds.Build().RunAsync("refund-1042", new Refund("acme", 120m, "new"), writable);
+                }
+
+                // docs:show
+                var path = "strata.db";
+                // docs:hide
+                path = file.Path;
+                // docs:show
+                using var store = await EfCoreCheckpointStore.OpenReadOnlyAsync(path, new SqliteStoreOptions
+                {
+                    // Where the application puts offloaded values. The write options have no effect here.
+                    Offload = new OffloadOptions { Blobs = new FileSystemCheckpointBlobStore("blobs") },
+                    // docs:hide
+                } with
+                {
+                    Offload = new OffloadOptions { Blobs = new FileSystemCheckpointBlobStore(blobs.FullName) },
+                    // docs:show
+                });
+                // docs:end guides/persistence/sqlite/read-only
+
+                Assert.True(store.IsReadOnly);
+                Assert.Equal(CheckpointStatus.Interrupted, (await store.LoadAsync("refund-1042"))?.Status);
+
+                // The refusals the page shows. A blob directory that doesn't exist:
+                var noBlobs = Path.Combine(blobs.FullName, "missing");
+                var refused = await Assert.ThrowsAsync<DirectoryNotFoundException>(() =>
+                    EfCoreCheckpointStore.OpenReadOnlyAsync(path, new SqliteStoreOptions
+                    {
+                        Offload = new OffloadOptions { Blobs = new FileSystemCheckpointBlobStore(noBlobs) },
+                    }));
+                Assert.Equal($"blob directory '{noBlobs}' doesn't exist", refused.Message);
+
+                // A file that a newer version of Strata wrote, and one from before the version table (version 0).
+                await ExecuteAsync(path, "UPDATE strata_schema_version SET version = 3 WHERE component = 'checkpoints'");
+                Assert.Equal(
+                    "database is at checkpoints schema version 3, and this build knows 2: upgrade the runtime",
+                    (await Assert.ThrowsAsync<InvalidOperationException>(() => EfCoreCheckpointStore.OpenReadOnlyAsync(path))).Message);
+                await ExecuteAsync(path, "DROP TABLE strata_schema_version");
+                Assert.Equal(
+                    "database is at checkpoints schema version 0, and a read-only store reads 1 to 2: open it once with a runtime to migrate it",
+                    (await Assert.ThrowsAsync<InvalidOperationException>(() => EfCoreCheckpointStore.OpenReadOnlyAsync(path))).Message);
+
+                // A SQLite file that isn't a Strata store.
+                using var other = new TempSqliteFile();
+                await ExecuteAsync(other.Path, "CREATE TABLE notes (body TEXT)");
+                Assert.Equal(
+                    $"'{other.Path}' has no Strata checkpoint log",
+                    (await Assert.ThrowsAsync<InvalidOperationException>(() => EfCoreCheckpointStore.OpenReadOnlyAsync(other.Path))).Message);
+            }
+            finally
+            {
+                SqliteConnection.ClearAllPools();
+                blobs.Delete(recursive: true);
+            }
+        }
+
+        private static async Task ExecuteAsync(string path, string sql)
+        {
+            await using var connection = new SqliteConnection($"Data Source={path};Pooling=False");
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = sql;
+            await command.ExecuteNonQueryAsync();
+        }
+    }
+}

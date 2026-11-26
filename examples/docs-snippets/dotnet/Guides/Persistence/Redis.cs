@@ -290,3 +290,64 @@ namespace Datalium.Strata.DocsSnippets.Guides.Persistence.Redis
         }
     }
 }
+
+namespace Datalium.Strata.DocsSnippets.Guides.Persistence.Redis
+{
+    // docs:begin guides/persistence/redis/read-only
+    using Datalium.Strata.Storage.Redis;
+
+    // docs:hide
+    using Datalium.Strata.Graph;
+    using Datalium.Strata.Interruption;
+
+    public partial class RedisSamples
+    {
+        [RedisFact]
+        public async Task ConnectReadOnly()
+        {
+            using var sandbox = new RedisSandbox("read_only");
+            using (var writable = await RedisCheckpointStore.ConnectAsync(
+                RedisFactAttribute.Url, new RedisStoreOptions { Prefix = sandbox.Prefix }))
+            {
+                var graph = new StateGraph<Refund>()
+                    .AddNode("Prepare", refund => refund with { Status = "awaiting approval" })
+                    .AddInterruptBoundary("Prepare")
+                    .AddNode("Pay", refund => refund with { Status = "paid" })
+                    .AddEdge("Prepare", "Pay")
+                    .Compile(new CompilationOptions { Checkpointing = CheckpointPolicy.EveryNode });
+                await graph.RunAsync("refund-1", new Refund("Ada", 42m, "new"), writable);
+            }
+
+            var keysBefore = sandbox.Keys("acme");
+
+            // docs:show
+            using var store = await RedisCheckpointStore.ConnectReadOnlyAsync("redis://localhost:6379", new RedisStoreOptions
+            {
+                Prefix = "acme",
+                // docs:hide
+            } with
+            {
+                Prefix = sandbox.Prefix,
+                // docs:show
+            });
+            // docs:end guides/persistence/redis/read-only
+
+            Assert.True(store.IsReadOnly);
+            var latest = await store.LoadAsync("refund-1");
+            Assert.Equal(CheckpointStatus.Interrupted, latest?.Status);
+            Assert.Equal(
+                "the store was opened read-only: save is refused",
+                (await Assert.ThrowsAsync<InvalidOperationException>(async () => await store.SaveAsync(latest!))).Message);
+            Assert.Equal(keysBefore, sandbox.Keys("acme"));
+
+            // A prefix nothing was written under is refused, and not indexed.
+            using var unused = new RedisSandbox("read_only_unused");
+            var refused = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                RedisCheckpointStore.ConnectReadOnlyAsync(RedisFactAttribute.Url, new RedisStoreOptions { Prefix = unused.Prefix }));
+            Assert.Equal(
+                $"no Strata thread index under prefix '{unused.Prefix}': nothing was written there, or no current runtime has connected to it",
+                refused.Message);
+            Assert.Empty(unused.Keys("acme"));
+        }
+    }
+}

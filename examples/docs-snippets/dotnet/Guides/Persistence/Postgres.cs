@@ -356,3 +356,51 @@ namespace Datalium.Strata.DocsSnippets.Guides.Persistence.Postgres
         }
     }
 }
+
+namespace Datalium.Strata.DocsSnippets.Guides.Persistence.Postgres
+{
+    // docs:begin guides/persistence/postgres/read-only
+    using Datalium.Strata.Storage.Postgres;
+
+    // docs:hide
+    using Datalium.Strata.Interruption;
+    using Npgsql;
+
+    public partial class PostgresSamples
+    {
+        [PostgresFact]
+        public async Task OpenReadOnly()
+        {
+            using var sandbox = new PostgresSandbox("postgres_read_only");
+            await using (var writable = await PostgresCheckpointStore.OpenAsync(sandbox.ConnectionString))
+            {
+                await Refunds.Build().RunAsync("refund-1042", new Refund("acme", 120m, "new"), writable);
+            }
+
+            // docs:show
+            var url = "postgres://reader:secret@replica.internal:5432/strata";
+            // docs:hide
+            url = sandbox.ConnectionString;
+            // docs:show
+            await using var store = await PostgresCheckpointStore.OpenReadOnlyAsync(url);
+            // docs:end guides/persistence/postgres/read-only
+
+            Assert.True(store.IsReadOnly);
+            var latest = await store.LoadAsync("refund-1042");
+            Assert.Equal(CheckpointStatus.Interrupted, latest?.Status);
+            Assert.Equal(
+                "the store was opened read-only: save is refused",
+                (await Assert.ThrowsAsync<InvalidOperationException>(async () => await store.SaveAsync(latest!))).Message);
+            Assert.Equal(
+                "the store was opened read-only: migrate is refused",
+                (await Assert.ThrowsAsync<InvalidOperationException>(async () => await store.MigrateAsync())).Message);
+
+            // A schema with no Strata tables is refused, by the database's name, and left empty.
+            using var empty = new PostgresSandbox("postgres_read_only_empty");
+            var database = new NpgsqlConnectionStringBuilder(empty.ConnectionString).Database;
+            var refused = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => PostgresCheckpointStore.OpenReadOnlyAsync(empty.ConnectionString));
+            Assert.Equal($"'{database}' has no Strata checkpoint log", refused.Message);
+        }
+    }
+}
