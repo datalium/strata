@@ -15,6 +15,8 @@ datalium-strata-ai = { path = "../../../rust/strata-ai" }
 datalium-strata-cloud = { path = "../../../rust/strata-cloud" }
 datalium-strata-host = { path = "../../../rust/strata-host" }
 datalium-strata-memory = { path = "../../../rust/strata-memory" }
+# The samples on /guides/tools/mcp-servers/, and the inventory-mcp example they connect to.
+datalium-strata-mcp = { path = "../../../rust/strata-mcp" }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 # The TLS sample on /guides/persistence/postgres/.
 native-tls = "0.2"
@@ -31,5 +33,5 @@ rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # signal: the hosting sample's Ctrl+C. sync: the memory samples' shared file. test-util and time: the paused clock
-# the timer, retry and lease samples run on.
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "sync", "test-util", "time"] }
+# the timer, retry and lease samples run on. io-util and net: the HTTP server the MCP samples connect to.
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "test-util", "time"] }

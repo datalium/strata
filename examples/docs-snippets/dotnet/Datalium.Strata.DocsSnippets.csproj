@@ -38,6 +38,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Include="..\inventory-mcp\InventoryServer.cs" Link="Guides\Tools\InventoryServer.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Whole-file samples (README.md): the tests load them from files/ next to the test assembly. -->
     <None Include="..\files\**\*" LinkBase="files" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
@@ -47,6 +51,12 @@
     <ProjectReference Include="..\..\..\dotnet\src\Datalium.Strata.Hosting\Datalium.Strata.Hosting.csproj" />
     <ProjectReference Include="..\..\..\dotnet\src\Datalium.Strata.AI\Datalium.Strata.AI.csproj" />
     <ProjectReference Include="..\..\..\dotnet\src\Datalium.Strata.Cloud\Datalium.Strata.Cloud.csproj" />
+    <ProjectReference Include="..\..\..\dotnet\src\Datalium.Strata.Mcp\Datalium.Strata.Mcp.csproj" />
+    <!-- inventory-mcp, the MCP server the /guides/tools/mcp-servers/ samples start as a child process, built next to
+         this project. Its InventoryServer.cs is also compiled in here, for the samples that reach it over HTTP.
+         Private="false": the SDK would otherwise copy its apphost here without its dll, and on Linux Process.Start finds
+         a bare command in the app's own directory before the PATH, so it would start that copy, which can't run. -->
+    <ProjectReference Include="..\inventory-mcp\InventoryMcp.csproj" ReferenceOutputAssembly="false" Private="false" />
     <!-- [StrataTool] methods need the generator wired in directly: analyzer references aren't transitive through an
          ordinary ProjectReference. -->
     <ProjectReference Include="..\..\..\dotnet\src\Datalium.Strata.SourceGenerators\Datalium.Strata.SourceGenerators.csproj"
