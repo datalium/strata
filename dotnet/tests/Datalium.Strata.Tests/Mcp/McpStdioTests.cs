@@ -108,14 +108,9 @@ public sealed class McpStdioTests
         await Assert.ThrowsAsync<IOException>(() => McpClient.ConnectAsync(McpServer.Stdio("strata-no-such-mcp-server")));
     }
 
-    [Fact]
+    [WindowsFact]
     public async Task On_Windows_A_Cmd_Is_Found_Through_Pathext_And_Its_Arguments_Arrive_As_Given()
     {
-        if (!OperatingSystem.IsWindows())
-        {
-            return;
-        }
-
         var directory = Directory.CreateTempSubdirectory("strata-mcp-cmd-");
         try
         {
@@ -157,7 +152,8 @@ public sealed class McpStdioTests
         Assert.Throws<ArgumentException>(() => StdioCommand.BatchArguments(@"C:\x.cmd", ["a\nb"]));
     }
 
-    [Fact]
+    /// <summary>Windows only, as Rust's: the lookup runs only there, and its file names are case-insensitive.</summary>
+    [WindowsFact]
     public void A_Name_Is_Found_Through_Path_And_Pathext()
     {
         var directory = Directory.CreateTempSubdirectory("strata-mcp-path-");
@@ -189,6 +185,18 @@ public sealed class McpStdioTests
         catch (ArgumentException)
         {
             return true;
+        }
+    }
+}
+
+/// <summary>A test of Windows behaviour (<c>PATHEXT</c>, <c>cmd.exe</c>): skipped elsewhere.</summary>
+public sealed class WindowsFactAttribute : FactAttribute
+{
+    public WindowsFactAttribute()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            Skip = "Windows only";
         }
     }
 }

@@ -4,7 +4,7 @@
 //! from `close` and from `Drop`. Mirrors .NET's `McpStdioTests`.
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use datalium_strata_mcp::{
@@ -12,14 +12,35 @@ use datalium_strata_mcp::{
 };
 use serde_json::json;
 
-/// The example's binary: `cargo test` builds examples beside the tests.
+/// The example's binary. Cargo puts it somewhere that depends on its
+/// version (the build-dir layout changed) and builds it only when the
+/// command builds examples (`--test mcp_stdio` alone doesn't). So ask Cargo
+/// (`CARGO`, set for tests) to build it, a no-op when it is up to date, and
+/// take the path it reports.
 fn fixture() -> PathBuf {
-    let deps = std::env::current_exe().unwrap();
-    let debug = deps.parent().unwrap().parent().unwrap();
-    debug.join("examples").join(format!(
-        "mcp_fixture_server{}",
-        std::env::consts::EXE_SUFFIX
-    ))
+    static FIXTURE: OnceLock<PathBuf> = OnceLock::new();
+    FIXTURE
+        .get_or_init(|| {
+            let output = std::process::Command::new(env!("CARGO"))
+                .args(["build", "--quiet", "--message-format=json", "--example"])
+                .arg("mcp_fixture_server")
+                .arg("--manifest-path")
+                .arg(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"))
+                .output()
+                .expect("cargo runs");
+            assert!(
+                output.status.success(),
+                "building mcp_fixture_server failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+                .filter(|message| message["target"]["name"] == "mcp_fixture_server")
+                .find_map(|message| message["executable"].as_str().map(PathBuf::from))
+                .expect("cargo reports the example's executable")
+        })
+        .clone()
 }
 
 fn stdio(args: &[&str]) -> StdioServer {
