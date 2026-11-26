@@ -41,6 +41,7 @@ Each entry ends with the wire formats that version writes and reads. The rules b
   - **No engine API changes.** Rust's `StrataTool::name()` stays `&'static str`. The crate interns each tool name it learns, once per distinct name, so reconnecting doesn't leak more. In Rust, `StrataError::ToolCallFailed`'s doc now also covers a tool that knows why it failed.
   - **Not built:** Strata as an MCP server, resources, prompts, sampling, roots, elicitation, subscriptions, progress, the tasks extension, full OAuth 2.1, and the old HTTP+SSE transport.
   - **New shared test fixtures** in `schema/fixtures/mcp/`. These are tests both engines pass, not formats Strata writes.
+  - **Docs samples** for the stratamesh.dev page `/guides/tools/mcp-servers/`, in `examples/docs-snippets/` in both languages, tested like the others. They connect to `inventory-mcp`, a small MCP server of their own (`examples/docs-snippets/inventory-mcp`, and the Rust crate's `inventory-mcp` example), over stdio and HTTP.
 
 ### Wire formats
 

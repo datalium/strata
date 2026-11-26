@@ -379,6 +379,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "datalium-strata-mcp"
+version = "0.9.0"
+dependencies = [
+ "base64 0.23.1",
+ "datalium-strata",
+ "libc",
+ "metrics",
+ "reqwest",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "datalium-strata-memory"
 version = "0.9.0"
 dependencies = [
@@ -2003,6 +2017,7 @@ dependencies = [
  "datalium-strata-ai",
  "datalium-strata-cloud",
  "datalium-strata-host",
+ "datalium-strata-mcp",
  "datalium-strata-memory",
  "futures-util",
  "native-tls",

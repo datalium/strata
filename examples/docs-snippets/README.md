@@ -6,6 +6,7 @@ The code samples on [stratamesh.dev](https://stratamesh.dev). Each one is a regi
 |---|---|---|
 | `dotnet/` | An xUnit project in `dotnet/Datalium.Strata.sln` | `dotnet test examples/docs-snippets/dotnet` |
 | `rust/` | A crate with no public items, only tests | `cd examples/docs-snippets/rust && cargo test` |
+| `inventory-mcp/` | The MCP server the C# samples for `/guides/tools/mcp-servers/` connect to. Not a sample. The Rust samples use its twin, the crate's `inventory-mcp` example | Built by `dotnet test examples/docs-snippets/dotnet` |
 
 Files follow the docs site's pages: the samples for `/concepts/graphs/` are in `dotnet/Concepts/Graphs.cs` and `rust/src/concepts/graphs.rs`.
 
