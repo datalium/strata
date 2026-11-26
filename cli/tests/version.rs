@@ -54,7 +54,7 @@ fn the_cli_the_crates_and_the_dotnet_packages_share_one_version() {
         .lines()
         .filter(|line| line.starts_with("datalium-strata") && line.contains("path ="))
         .collect();
-    assert_eq!(siblings.len(), 6, "the six crates of the workspace");
+    assert_eq!(siblings.len(), 7, "the seven crates of the workspace");
     for sibling in siblings {
         assert!(
             sibling.contains(&format!("version = \"={cli}\"")),
