@@ -134,7 +134,7 @@ Most run without an API key. The ones that need a model say so at the top of the
 
 **The wire formats:** from `0.9.0` until `1.0.0-rc.1`, no version changes one.
 
-`1.0.0-rc.1` adds a review of the public API in both engines, with checks in CI that catch a breaking change, and a support statement. 1.0 adds outside teams running Strata in production, and a checkpoint schema that has stayed stable through a release.
+`1.0.0-rc.1`, planned for 2026-12-14, adds a review of the public API in both engines, with checks in CI that catch a breaking change, a written stability promise and a support statement. It also brings the MCP client and read-only store opening. 1.0 follows once a team outside Datalium runs Strata in production, someone outside Datalium has reproduced the [benchmarks](benchmarks/RESULTS.md), and the checkpoint schema has stayed stable through a release. It doesn't wait for Strata Cloud.
 
 The [Known limitations](https://stratamesh.dev/reference/known-limitations/) page lists what isn't built yet, and what to do in the meantime.
 
