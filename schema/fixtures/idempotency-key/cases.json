@@ -1,0 +1,165 @@
+{
+  "description": "The idempotency key's format and the crash contract (STRATA-SPEC-005, section 10; design/33-Durable-Execution.md). Not a wire format: each case is a graph, a policy and either a `checkpoint` to recover or a fresh `run`, and every handler execution it must make, as its node path, its idempotency key and whether it may have run before (`is_recovery`). A `checkpoint` that is a string is a path under schema/fixtures. Handlers in a parallel group or a map run at once, so a test compares the `runs` as a set. The graphs, which each engine's test builds with handlers that record their context: `line` is A -> B -> C; `subgraph` is Before -> Work (a subgraph: X -> Y -> Z) -> After; `fan-outs` is Group (branches b1, b2) -> Fan (a map over items k1, k2: Step -> Then) -> Done. `every_node` compiles the outermost graph with CheckpointPolicy.EveryNode, `boundaries` with the default; `max_node_hops` sets a hop limit.",
+  "cases": [
+    {
+      "name": "a node at the outermost level runs again under the hop count's key",
+      "graph": "line",
+      "policy": "every_node",
+      "checkpoint": "checkpoint-lifecycle/running.json",
+      "runs": [
+        { "path": "B", "key": "thread_running_demo/B#2", "is_recovery": true },
+        { "path": "C", "key": "thread_running_demo/C#3", "is_recovery": false }
+      ]
+    },
+    {
+      "name": "a level without strata.hops counts from 0",
+      "graph": "line",
+      "policy": "every_node",
+      "checkpoint": {
+        "schema_version": "1.7.0",
+        "thread_id": "thread_no_hops_demo",
+        "status": "running",
+        "suspended_node": "A",
+        "next_node": "B",
+        "frozen_state": { "trail": "A", "approved": false, "limit": 0 },
+        "metadata": null,
+        "created_at": "2026-10-10T00:00:00Z",
+        "resumed_at": null
+      },
+      "runs": [
+        { "path": "B", "key": "thread_no_hops_demo/B#1", "is_recovery": true },
+        { "path": "C", "key": "thread_no_hops_demo/C#2", "is_recovery": false }
+      ]
+    },
+    {
+      "name": "a node inside a subgraph has a hop at each level",
+      "graph": "subgraph",
+      "policy": "every_node",
+      "checkpoint": "checkpoint-lifecycle/nested-running.json",
+      "runs": [
+        { "path": "Work/Y", "key": "thread_nested_running_demo/Work/Y#2.2", "is_recovery": true },
+        { "path": "Work/Z", "key": "thread_nested_running_demo/Work/Z#2.3", "is_recovery": false },
+        { "path": "After", "key": "thread_nested_running_demo/After#3", "is_recovery": false }
+      ]
+    },
+    {
+      "name": "a subgraph not yet entered starts its child afresh",
+      "graph": "subgraph",
+      "policy": "every_node",
+      "checkpoint": {
+        "schema_version": "1.7.0",
+        "thread_id": "thread_subgraph_entry_demo",
+        "status": "running",
+        "suspended_node": "Before",
+        "next_node": "Work",
+        "frozen_state": { "trail": "Before", "approved": false, "limit": 0 },
+        "metadata": { "strata.hops": "1" },
+        "created_at": "2026-10-10T00:00:00Z",
+        "resumed_at": null
+      },
+      "runs": [
+        { "path": "Work/X", "key": "thread_subgraph_entry_demo/Work/X#2.1", "is_recovery": true },
+        { "path": "Work/Y", "key": "thread_subgraph_entry_demo/Work/Y#2.2", "is_recovery": false },
+        { "path": "Work/Z", "key": "thread_subgraph_entry_demo/Work/Z#2.3", "is_recovery": false },
+        { "path": "After", "key": "thread_subgraph_entry_demo/After#3", "is_recovery": false }
+      ]
+    },
+    {
+      "name": "every branch of a group runs again at the group's hop",
+      "graph": "fan-outs",
+      "policy": "every_node",
+      "checkpoint": {
+        "schema_version": "1.7.0",
+        "thread_id": "thread_group_demo",
+        "status": "running",
+        "suspended_node": null,
+        "next_node": "Group",
+        "frozen_state": { "trail": "", "approved": false, "limit": 0 },
+        "metadata": { "strata.hops": "0" },
+        "created_at": "2026-10-10T00:00:00Z",
+        "resumed_at": null
+      },
+      "runs": [
+        { "path": "Group/b1", "key": "thread_group_demo/Group/b1#1", "is_recovery": true },
+        { "path": "Group/b2", "key": "thread_group_demo/Group/b2#1", "is_recovery": true },
+        { "path": "Fan/k1/Step", "key": "thread_group_demo/Fan/k1/Step#2.1", "is_recovery": false },
+        { "path": "Fan/k1/Then", "key": "thread_group_demo/Fan/k1/Then#2.2", "is_recovery": false },
+        { "path": "Fan/k2/Step", "key": "thread_group_demo/Fan/k2/Step#2.1", "is_recovery": false },
+        { "path": "Fan/k2/Then", "key": "thread_group_demo/Fan/k2/Then#2.2", "is_recovery": false },
+        { "path": "Done", "key": "thread_group_demo/Done#3", "is_recovery": false }
+      ]
+    },
+    {
+      "name": "every node of every item of a map runs again, a level under the map's hop",
+      "graph": "fan-outs",
+      "policy": "every_node",
+      "checkpoint": {
+        "schema_version": "1.7.0",
+        "thread_id": "thread_map_demo",
+        "status": "running",
+        "suspended_node": "Group",
+        "next_node": "Fan",
+        "frozen_state": { "trail": "G", "approved": false, "limit": 0 },
+        "metadata": { "strata.hops": "1" },
+        "created_at": "2026-10-10T00:00:00Z",
+        "resumed_at": null
+      },
+      "runs": [
+        { "path": "Fan/k1/Step", "key": "thread_map_demo/Fan/k1/Step#2.1", "is_recovery": true },
+        { "path": "Fan/k1/Then", "key": "thread_map_demo/Fan/k1/Then#2.2", "is_recovery": true },
+        { "path": "Fan/k2/Step", "key": "thread_map_demo/Fan/k2/Step#2.1", "is_recovery": true },
+        { "path": "Fan/k2/Then", "key": "thread_map_demo/Fan/k2/Then#2.2", "is_recovery": true },
+        { "path": "Done", "key": "thread_map_demo/Done#3", "is_recovery": false }
+      ]
+    },
+    {
+      "name": "a durable run's keys have no run id",
+      "graph": "line",
+      "policy": "every_node",
+      "run": { "thread_id": "t", "run_id": "run-1" },
+      "runs": [
+        { "path": "A", "key": "t/A#1", "is_recovery": false },
+        { "path": "B", "key": "t/B#2", "is_recovery": false },
+        { "path": "C", "key": "t/C#3", "is_recovery": false }
+      ]
+    },
+    {
+      "name": "a run that isn't durable ends its keys with the run id",
+      "graph": "line",
+      "policy": "boundaries",
+      "run": { "thread_id": "t", "run_id": "run-1" },
+      "runs": [
+        { "path": "A", "key": "t/A#1@run-1", "is_recovery": false },
+        { "path": "B", "key": "t/B#2@run-1", "is_recovery": false },
+        { "path": "C", "key": "t/C#3@run-1", "is_recovery": false }
+      ]
+    },
+    {
+      "name": "a run that isn't durable ends its keys with the run id even with a hop limit, which stores its hops",
+      "graph": "line",
+      "policy": "boundaries",
+      "max_node_hops": 10,
+      "run": { "thread_id": "t", "run_id": "run-1" },
+      "runs": [
+        { "path": "A", "key": "t/A#1@run-1", "is_recovery": false },
+        { "path": "B", "key": "t/B#2@run-1", "is_recovery": false },
+        { "path": "C", "key": "t/C#3@run-1", "is_recovery": false }
+      ]
+    },
+    {
+      "name": "a group and a map in a run that isn't durable",
+      "graph": "fan-outs",
+      "policy": "boundaries",
+      "run": { "thread_id": "t", "run_id": "run-1" },
+      "runs": [
+        { "path": "Group/b1", "key": "t/Group/b1#1@run-1", "is_recovery": false },
+        { "path": "Group/b2", "key": "t/Group/b2#1@run-1", "is_recovery": false },
+        { "path": "Fan/k1/Step", "key": "t/Fan/k1/Step#2.1@run-1", "is_recovery": false },
+        { "path": "Fan/k1/Then", "key": "t/Fan/k1/Then#2.2@run-1", "is_recovery": false },
+        { "path": "Fan/k2/Step", "key": "t/Fan/k2/Step#2.1@run-1", "is_recovery": false },
+        { "path": "Fan/k2/Then", "key": "t/Fan/k2/Then#2.2@run-1", "is_recovery": false },
+        { "path": "Done", "key": "t/Done#3@run-1", "is_recovery": false }
+      ]
+    }
+  ]
+}

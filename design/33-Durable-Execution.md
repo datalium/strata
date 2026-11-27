@@ -290,7 +290,7 @@ Two things on `NodeContext` are for that:
 
 A node passes the key to whatever it changes: StrataOps' rollback write carries it in its authorization, so a recovered `Execute` never rolls back twice. A node with several effects derives one key per effect (`$"{ctx.IdempotencyKey}:notify"`).
 
-Under `Boundaries` nothing is recovered, and hop counts aren't stored unless the level has a hop limit, so the key ends with the run id (`…#3@018f…`): the same across a node's retries, never repeated by a later resume. A fresh run on a thread id that was used before starts counting hops again under either policy: don't reuse thread ids and rely on the key.
+Under `Boundaries` nothing is recovered, so the key ends with the run id (`…#3@018f…`): the same across a node's retries, never repeated by a later resume. It does at a level with a hop limit too, which stores its hop count: only a run compiled with `EveryNode` has keys without the run id. The format is normative in STRATA-SPEC-005, section 10. A fresh run on a thread id that was used before starts counting hops again under either policy: don't reuse thread ids and rely on the key.
 
 Hop counts (`strata.hops`, `design/24-Loop-Circuit-Breaker.md`) are written on every checkpoint level of an `EveryNode` run, limit or no limit.
 
@@ -488,7 +488,7 @@ Recommendations are in bold.
 11. **A resume's claim replaces the stamp.** **Yes.** A stamp and then a checkpoint are two writes, and a crash between them loses the approval with no way to give it again. One conditional append can't be half done.
 12. **A `failed` checkpoint for a run that gives up without one, or throws.** **Yes, under `EveryNode`.** A live process must not leave `running` behind. The alternative is a thread the driver retries into the same exception on every sweep.
 13. **Whose policy applies inside a subgraph.** **The outermost graph's.** The thread is its, and only it has the store.
-14. **The idempotency key's shape.** **Thread, node path, hop numbers**; the run id is appended when hops aren't stored. It needs nothing new on the wire but `strata.hops` on every level.
+14. **The idempotency key's shape.** **Thread, node path, hop numbers**; the run id is appended when the run isn't durable. It needs nothing new on the wire but `strata.hops` on every level.
 15. **What `IsRecovery` covers.** **The node in flight at each level, until a commit; everything inside a re-run group or map.** Narrower would miss an effect that may have happened; wider would cry wolf on every node of a recovered run.
 16. **Staleness without a new query.** **List `running`, read each lease.** One round trip per running thread per sweep, which is nothing at StrataOps' scale. A store-side "not held" filter is "Not built".
 17. **`StaleAfter` has no default without a lease.** **Refuse the call.** Any default would recover live threads in some deployment; the caller has to know its longest node.

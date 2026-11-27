@@ -43,6 +43,11 @@ Each entry ends with the wire formats that version writes and reads. The rules b
   - **Not built:** Strata as an MCP server, resources, prompts, sampling, roots, elicitation, subscriptions, progress, the tasks extension, full OAuth 2.1, and the old HTTP+SSE transport.
   - **New shared test fixtures** in `schema/fixtures/mcp/`. These are tests both engines pass, not formats Strata writes.
   - **Docs samples** for the stratamesh.dev page `/guides/tools/mcp-servers/`, in `examples/docs-snippets/` in both languages, tested like the others. They connect to `inventory-mcp`, a small MCP server of their own (`examples/docs-snippets/inventory-mcp`, and the Rust crate's `inventory-mcp` example), over stdio and HTTP.
+- **The crash contract and the idempotency key's format are now part of STRATA-SPEC-005** (section 10). Both used to be written down only in `design/33`. The section says which checkpoint is saved before a node runs, what a recovery runs again, and why that is at least once. It also gives the exact format of `NodeContext.IdempotencyKey` (Rust `idempotency_key()`), with the steps for deriving a recovered node's key from a checkpoint, and what the key doesn't promise.
+  - **What a caller must do:** treat the key as an opaque string and compare it for equality. It is unique only if thread ids aren't reused and no thread id, node name or branch name contains `/`.
+  - **New shared test fixtures** in `schema/fixtures/idempotency-key/`. Both engines recover each case's checkpoint, or run it fresh, and must give every node the key and `IsRecovery` the case lists. These are tests, not a format Strata writes.
+  - **A correction to `design/33`:** a key ends with `@` and the run id whenever the run isn't durable. That includes a `Boundaries` level with a hop limit, which stores its hop count. The doc used to say "when hops aren't stored".
+  - **Nothing an application sees changes.** Both engines already behaved this way.
 
 ### Wire formats
 

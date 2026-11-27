@@ -240,7 +240,10 @@ public class DurableExecutionTests(ITestOutputHelper output)
             .Compile(Durable);
 
     /// <summary><c>Before</c> -> <c>Work</c> (a subgraph: <c>X</c> -> <c>Y</c> -> <c>Z</c>) -> <c>After</c>.</summary>
-    private static CompiledGraph<Job> WithSubgraph(Journal journal) =>
+    private static CompiledGraph<Job> WithSubgraph(Journal journal) => Subgraph(journal).Compile(Durable);
+
+    /// <summary><see cref="WithSubgraph"/>'s graph, before it is compiled.</summary>
+    private static StateGraph<Job> Subgraph(Journal journal) =>
         new StateGraph<Job>()
             .AddNode("Before", Node(journal))
             .AddSubgraph(
@@ -250,11 +253,13 @@ public class DurableExecutionTests(ITestOutputHelper output)
                 (job, done) => job with { Trail = $"{job.Trail}[{done.Trail}]" })
             .AddNode("After", Node(journal))
             .AddEdge("Before", "Work")
-            .AddEdge("Work", "After")
-            .Compile(Durable);
+            .AddEdge("Work", "After");
 
     /// <summary><c>Group</c> (branches <c>b1</c>, <c>b2</c>) -> <c>Fan</c> (a map over <c>k1</c>, <c>k2</c>: <c>Step</c> -> <c>Then</c>) -> <c>Done</c>.</summary>
-    private static CompiledGraph<Job> WithFanOuts(Journal journal) =>
+    private static CompiledGraph<Job> WithFanOuts(Journal journal) => FanOuts(journal).Compile(Durable);
+
+    /// <summary><see cref="WithFanOuts"/>'s graph, before it is compiled.</summary>
+    private static StateGraph<Job> FanOuts(Journal journal) =>
         new StateGraph<Job>()
             .AddParallelGroup(
                 "Group",
@@ -269,8 +274,7 @@ public class DurableExecutionTests(ITestOutputHelper output)
                 (job, _) => job with { Trail = job.Trail + "M" })
             .AddNode("Done", Node(journal))
             .AddEdge("Group", "Fan")
-            .AddEdge("Fan", "Done")
-            .Compile(Durable);
+            .AddEdge("Fan", "Done");
 
     // --- Helpers ---
 
@@ -1332,6 +1336,83 @@ public class DurableExecutionTests(ITestOutputHelper output)
         Assert.Contains(new Visit("Work/Y", "thread_nested_running_demo/Work/Y#2.2", true), journal.Visits);
         Assert.Contains(new Visit("B", "thread_claimed_demo/B#2", true) { Reviewer = "alice" }, journal.Visits);
         Assert.Equal(0, journal.Count("Work/X"));
+    }
+
+    // --- The idempotency-key fixtures ---
+
+    /// <summary><c>schema/fixtures/idempotency-key/cases.json</c> (STRATA-SPEC-005, section 10).</summary>
+    private static JsonArray KeyCases() => SharedFixture("idempotency-key/cases.json")["cases"]!.AsArray();
+
+    private static JsonNode SharedFixture(string path, [CallerFilePath] string sourceFilePath = "") =>
+        JsonNode.Parse(File.ReadAllText(Path.GetFullPath(Path.Combine(
+            Path.GetDirectoryName(sourceFilePath)!, "..", "..", "..", "schema", "fixtures", path))))!;
+
+    public static TheoryData<string> KeyCaseNames()
+    {
+        var names = new TheoryData<string>();
+        foreach (var keyCase in KeyCases())
+        {
+            names.Add(keyCase!["name"]!.GetValue<string>());
+        }
+
+        return names;
+    }
+
+    /// <summary>The visits in an order that doesn't depend on which branch or item ran first.</summary>
+    private static List<Visit> InKeyOrder(IEnumerable<Visit> visits) =>
+        [.. visits.OrderBy(v => v.Key, StringComparer.Ordinal).ThenBy(v => v.Path, StringComparer.Ordinal).ThenBy(v => v.Recovery)];
+
+    [Theory]
+    [MemberData(nameof(KeyCaseNames))]
+    public async Task An_Idempotency_Key_Fixture_Holds(string name)
+    {
+        var keyCase = KeyCases().Single(c => c!["name"]!.GetValue<string>() == name)!;
+        var journal = new Journal();
+        var store = new InMemoryCheckpointStore();
+        var options = new CompilationOptions
+        {
+            Checkpointing = keyCase["policy"]!.GetValue<string>() switch
+            {
+                "every_node" => CheckpointPolicy.EveryNode,
+                "boundaries" => CheckpointPolicy.Boundaries,
+                var other => throw new InvalidOperationException($"{name}: unknown policy '{other}'"),
+            },
+            MaxNodeHops = keyCase["max_node_hops"]?.GetValue<int>(),
+        };
+        var graph = (keyCase["graph"]!.GetValue<string>() switch
+        {
+            "line" => Chain(journal, "A", "B", "C"),
+            "subgraph" => Subgraph(journal),
+            "fan-outs" => FanOuts(journal),
+            var other => throw new InvalidOperationException($"{name}: unknown graph '{other}'"),
+        }).Compile(options);
+
+        GraphExecutionResult<Job> result;
+        switch ((keyCase["checkpoint"], keyCase["run"]))
+        {
+            case ({ } wire, null):
+                var checkpoint = Checkpoint.FromWireJson(
+                    wire.GetValueKind() == System.Text.Json.JsonValueKind.String
+                        ? SharedFixture(wire.GetValue<string>())
+                        : wire.DeepClone());
+                store.Save(checkpoint);
+                result = await graph.RecoverAsync(checkpoint.ThreadId, store);
+                break;
+            case (null, { } run):
+                result = await graph.RunAsync(
+                    run["thread_id"]!.GetValue<string>(),
+                    new Job(string.Empty),
+                    store,
+                    new RunOptions { RunId = run["run_id"]!.GetValue<string>() });
+                break;
+            default:
+                throw new InvalidOperationException($"{name}: a case has a checkpoint or a run, not both");
+        }
+
+        Completed(result);
+        var expected = keyCase["runs"]!.AsArray().Select(r => new Visit(
+            r!["path"]!.GetValue<string>(), r["key"]!.GetValue<string>(), r["is_recovery"]!.GetValue<bool>()));
+        Assert.Equal(InKeyOrder(expected), InKeyOrder(journal.Visits));
     }
 
     // --- Cost ---

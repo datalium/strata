@@ -322,6 +322,17 @@ their edges however they like.
   them, and the CLI reads what .NET wrote. `rust/strata-memory/tests/cross_engine.rs`,
   `Backends/CrossEngineTests.cs` and `cli/tests/cross_engine.rs`, run across
   the engines by `.github/workflows/cross-engine-ci.yml`.
+- `schema/fixtures/idempotency-key/cases.json` (STRATA-SPEC-005, section 10;
+  `design/33-Durable-Execution.md`) — not a wire format: the crash contract
+  and the idempotency key's format. Each case is a graph (`line`, `subgraph`
+  or `fan-outs`), a policy (`every_node` or `boundaries`, with an optional
+  `max_node_hops`), and either a `running` `checkpoint` to recover (a path
+  under `schema/fixtures`, or the checkpoint itself) or a fresh `run` with a
+  `thread_id` and a `run_id`. `runs` is every handler execution it must make:
+  its `path`, its `key` and its `is_recovery`, compared as a set, since a
+  group's branches and a map's items run at once. Both engines replay every
+  case through the public API (`rust/strata-core/tests/durable_execution.rs`,
+  `DurableExecutionTests.cs`).
 - `schema/fixtures/cloud/` (`design/30-Strata-Cloud-Store.md`) — Strata Cloud's
   SDK wire, one recorded exchange per file: the `operation` (`save`, `load` or
   `decisions`; since SG-36, `design/43-Cloud-Leases-And-Listing.md`, also
