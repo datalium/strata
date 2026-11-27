@@ -8,6 +8,14 @@ Each entry ends with the wire formats that version writes and reads. The rules b
 
 ## Unreleased
 
+### Upgrading
+
+**This release breaks one Rust API, which our promise says no release after `0.9.0` would do.** `ValidationErrorKind` gains `InvalidName` (below), and is now `#[non_exhaustive]`. Rust code that matches it without a `_` arm no longer compiles. Add `_ => …`: it covers `InvalidName` and every kind added later.
+
+- **Why we broke it:** without the new error, two executions could share an idempotency key, and a system that deduplicates on the key would skip real work. The check needs a new kind, and a Rust enum that isn't `#[non_exhaustive]` can't gain one without breaking exhaustive matches. Nothing could be marked deprecated first. Leaving the bug in place to keep the promise would have been worse.
+- **Why it won't happen again:** with `#[non_exhaustive]`, a new kind no longer breaks anyone. We made both changes in one release, so the code that has to change changes once.
+- **.NET is unaffected.** A C# enum can gain a member without breaking code that uses it.
+
 ### Changes
 
 - **Checkpoint stores can be opened read-only** (FR-MP-12, `design/51-Read-Only-Store-Open.md`). This is for tools that only look, like the `strata` CLI and Strata Desktop.
@@ -51,7 +59,7 @@ Each entry ends with the wire formats that version writes and reads. The rules b
   - **Upgrading:**
     - A graph with `/` in a node or branch name no longer compiles. Rename the node.
     - A durable thread whose id holds `%`, `/` or `#`, started by an earlier version and recovered by this one, runs its node in flight under a key the earlier attempt didn't use. A system that deduplicates on the key sees it as a new request, once.
-    - Rust code that matches `ValidationErrorKind` exhaustively needs an arm for `InvalidName`.
+    - Rust code that matches `ValidationErrorKind` needs a `_` arm (see "Upgrading" above).
   - **New shared test fixtures** in `schema/fixtures/idempotency-key/`. Both engines recover each case's checkpoint, or run it fresh, and must give every node the key and `IsRecovery` the case lists. These are tests, not a format Strata writes. `schema/fixtures/graph-validation/invalid-name.json` pins the new validation error, for both engines and the CLI.
   - **A correction to `design/33`:** a key ends with `@` and the run id whenever the run isn't durable. That includes a `Boundaries` level with a hop limit, which stores its hop count. The doc used to say "when hops aren't stored".
 

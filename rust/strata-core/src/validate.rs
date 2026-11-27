@@ -21,7 +21,10 @@ use std::collections::{HashMap, HashSet};
 use crate::parallel::JoinKind;
 use crate::schema::{GraphDefinition, GraphNodeDef, GraphNodeKind};
 
+/// What a [`ValidationError`] found. New kinds are added as validation learns
+/// new checks, so a `match` on it needs a `_` arm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum ValidationErrorKind {
     MissingEntryPoint,
     OrphanNode,
