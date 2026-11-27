@@ -89,10 +89,17 @@ fn print_error_lines(result: &ValidationResult) {
     for error in &result.errors {
         match &error.related_node {
             // The related name is a branch of the group, not an edge's target.
-            Some(branch) if error.kind == ValidationErrorKind::DuplicateBranch => println!(
-                "  [{}] {}/{}: {}",
-                error.code, error.node, branch, error.message
-            ),
+            Some(branch)
+                if matches!(
+                    error.kind,
+                    ValidationErrorKind::DuplicateBranch | ValidationErrorKind::InvalidName
+                ) =>
+            {
+                println!(
+                    "  [{}] {}/{}: {}",
+                    error.code, error.node, branch, error.message
+                )
+            }
             Some(related) => println!(
                 "  [{}] {} -> {}: {}",
                 error.code, error.node, related, error.message

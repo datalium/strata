@@ -1,0 +1,51 @@
+{
+  "schema_version": "1.3.0",
+  "entry_point": "Triage",
+  "nodes": [
+    { "name": "Triage", "metadata": null },
+    {
+      "name": "Investigate",
+      "metadata": null,
+      "kind": "parallel_group",
+      "branches": [
+        { "name": "Kubernetes", "metadata": null },
+        { "name": "logs/app", "metadata": null },
+        { "name": "logs/app", "metadata": null }
+      ]
+    },
+    { "name": "Notify/Slack", "metadata": null },
+    {
+      "name": "Remediate",
+      "metadata": null,
+      "kind": "subgraph",
+      "graph": {
+        "schema_version": "1.0.0",
+        "entry_point": "Plan",
+        "nodes": [
+          { "name": "Plan", "metadata": null },
+          { "name": "Apply/Fix", "metadata": null }
+        ],
+        "edges": [
+          { "from": "Plan", "to": "Apply/Fix", "guarded": false, "condition": null }
+        ]
+      }
+    },
+    {
+      "name": "Fan",
+      "metadata": null,
+      "kind": "map",
+      "graph": {
+        "schema_version": "1.0.0",
+        "entry_point": "Read/Item",
+        "nodes": [{ "name": "Read/Item", "metadata": null }],
+        "edges": []
+      }
+    }
+  ],
+  "edges": [
+    { "from": "Triage", "to": "Investigate", "guarded": false, "condition": null },
+    { "from": "Investigate", "to": "Notify/Slack", "guarded": false, "condition": null },
+    { "from": "Notify/Slack", "to": "Remediate", "guarded": false, "condition": null },
+    { "from": "Remediate", "to": "Fan", "guarded": false, "condition": null }
+  ]
+}

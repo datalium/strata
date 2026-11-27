@@ -98,8 +98,10 @@ public sealed class NodeContext : IExecutionContext
     ///
     /// In a graph compiled with <c>CheckpointPolicy.EveryNode</c> it is also the same when the node runs again
     /// in a recovery (<see cref="IsRecovery"/>). In any other run it ends with <c>@</c> and the run id, so a
-    /// later resume never repeats one. A branch of a parallel group has its own, under its group's hop. Empty
-    /// in a context built by hand, unless set.
+    /// later resume never repeats one. A branch of a parallel group has its own, under its group's hop. A
+    /// <c>%</c>, <c>/</c> or <c>#</c> in the thread id or the run id is percent-encoded (<c>%25</c>,
+    /// <c>%2F</c>, <c>%23</c>), so no two threads, and no two runs, share a key. Empty in a context built by
+    /// hand, unless set.
     ///
     /// The engine builds it the first time it is read, since most handlers never read it
     /// (<c>design/49-Burst-Throughput.md</c>); it is the same string whenever, and on whichever thread, it is read.

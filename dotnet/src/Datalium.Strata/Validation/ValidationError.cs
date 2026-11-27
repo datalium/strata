@@ -19,6 +19,13 @@ public enum ValidationErrorKind
     DuplicateBranch,
 
     /// <summary>
+    /// A node's or a branch's name contains <c>/</c>, which separates the names in a node's path and its
+    /// idempotency key (<c>design/22-Graph-Structure-In-Definitions.md</c>,
+    /// <c>design/Arch-Specs/STRATA-SPEC-005.md</c>, section 10.2).
+    /// </summary>
+    InvalidName,
+
+    /// <summary>
     /// A parallel group's quorum join is missing its count, or it is below 1 or above the branch count
     /// (<c>design/26-Parallel-Group-Controls-And-Joins.md</c>); or a map's is missing or below 1
     /// (<c>design/27-Map-Fan-Out.md</c>).

@@ -377,6 +377,11 @@ fn approval(journal: &Arc<Journal>) -> Arc<CompiledGraph<Job>> {
 
 /// `Before` -> `Work` (a subgraph: `X` -> `Y` -> `Z`) -> `After`.
 fn with_subgraph(journal: &Arc<Journal>) -> Arc<CompiledGraph<Job>> {
+    Arc::new(subgraph(journal).compile_with(durable()).unwrap())
+}
+
+/// [`with_subgraph`]'s graph, before it is compiled.
+fn subgraph(journal: &Arc<Journal>) -> StateGraph<Job> {
     let child = chain(journal, &["X", "Y", "Z"]).compile().unwrap();
     let graph = node(StateGraph::<Job>::new(), journal, "Before").add_subgraph(
         "Work",
@@ -387,13 +392,9 @@ fn with_subgraph(journal: &Arc<Journal>) -> Arc<CompiledGraph<Job>> {
             ..parent.clone()
         },
     );
-    Arc::new(
-        node(graph, journal, "After")
-            .add_edge("Before", "Work")
-            .add_edge("Work", "After")
-            .compile_with(durable())
-            .unwrap(),
-    )
+    node(graph, journal, "After")
+        .add_edge("Before", "Work")
+        .add_edge("Work", "After")
 }
 
 fn branch(
@@ -408,6 +409,11 @@ fn branch(
 /// `Group` (branches `b1`, `b2`) -> `Fan` (a map over `k1`, `k2`: `Step` ->
 /// `Then`) -> `Done`.
 fn with_fan_outs(journal: &Arc<Journal>) -> Arc<CompiledGraph<Job>> {
+    Arc::new(fan_outs(journal).compile_with(durable()).unwrap())
+}
+
+/// [`with_fan_outs`]'s graph, before it is compiled.
+fn fan_outs(journal: &Arc<Journal>) -> StateGraph<Job> {
     let item = chain(journal, &["Step", "Then"]).compile().unwrap();
     let graph = StateGraph::<Job>::new()
         .add_parallel_group(
@@ -434,13 +440,9 @@ fn with_fan_outs(journal: &Arc<Journal>) -> Arc<CompiledGraph<Job>> {
                 ..entry.clone()
             },
         );
-    Arc::new(
-        node(graph, journal, "Done")
-            .add_edge("Group", "Fan")
-            .add_edge("Fan", "Done")
-            .compile_with(durable())
-            .unwrap(),
-    )
+    node(graph, journal, "Done")
+        .add_edge("Group", "Fan")
+        .add_edge("Fan", "Done")
 }
 
 // --- Helpers -----------------------------------------------------------------
@@ -2076,6 +2078,164 @@ async fn a_thread_the_shared_fixtures_hold_is_recovered() {
         ..visit("B", "thread_claimed_demo/B#2", true)
     }));
     assert_eq!(journal.count("Work/X"), 0);
+}
+
+// --- The idempotency-key fixtures ---------------------------------------------
+
+/// `schema/fixtures/idempotency-key/cases.json` (STRATA-SPEC-005, section 10).
+#[derive(Deserialize)]
+struct KeyCases {
+    cases: Vec<KeyCase>,
+}
+
+#[derive(Deserialize)]
+struct KeyCase {
+    name: String,
+    graph: String,
+    policy: String,
+    #[serde(default)]
+    max_node_hops: Option<u32>,
+    /// A checkpoint to recover: a path under `schema/fixtures`, or the
+    /// checkpoint itself.
+    #[serde(default)]
+    checkpoint: Option<serde_json::Value>,
+    #[serde(default)]
+    run: Option<FreshRun>,
+    runs: Vec<ExpectedRun>,
+}
+
+#[derive(Deserialize)]
+struct FreshRun {
+    thread_id: String,
+    run_id: String,
+}
+
+#[derive(Deserialize)]
+struct ExpectedRun {
+    path: String,
+    key: String,
+    is_recovery: bool,
+}
+
+fn shared_fixture(path: &str) -> String {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../schema/fixtures")
+        .join(path);
+    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+}
+
+/// The visits in an order that doesn't depend on which branch or item ran
+/// first.
+fn in_key_order(mut visits: Vec<Visit>) -> Vec<Visit> {
+    visits.sort_by(|a, b| (&a.key, &a.path, a.recovery).cmp(&(&b.key, &b.path, b.recovery)));
+    visits
+}
+
+#[tokio::test(start_paused = true)]
+async fn every_idempotency_key_fixture_holds() {
+    let file: KeyCases =
+        serde_json::from_str(&shared_fixture("idempotency-key/cases.json")).unwrap();
+    assert!(!file.cases.is_empty());
+
+    for case in file.cases {
+        let name = &case.name;
+        let journal = Journal::new();
+        let store = LeaseStore::new();
+        let mut options = match case.policy.as_str() {
+            "every_node" => durable(),
+            "boundaries" => CompileOptions::new(),
+            other => panic!("{name}: unknown policy '{other}'"),
+        };
+        if let Some(limit) = case.max_node_hops {
+            options = options.with_max_node_hops(limit);
+        }
+        let graph = match case.graph.as_str() {
+            "line" => chain(&journal, &["A", "B", "C"]),
+            "subgraph" => subgraph(&journal),
+            "fan-outs" => fan_outs(&journal),
+            other => panic!("{name}: unknown graph '{other}'"),
+        }
+        .compile_with(options)
+        .unwrap();
+
+        let result = match (case.checkpoint, case.run) {
+            (Some(checkpoint), None) => {
+                let checkpoint: Checkpoint = match checkpoint {
+                    serde_json::Value::String(path) => {
+                        serde_json::from_str(&shared_fixture(&path)).unwrap()
+                    }
+                    inline => serde_json::from_value(inline).unwrap(),
+                };
+                let thread_id = checkpoint.thread_id.clone();
+                store.save(checkpoint).await.unwrap();
+                graph.recover(thread_id, store.clone()).await
+            }
+            (None, Some(run)) => {
+                graph
+                    .run_with(
+                        run.thread_id,
+                        job(),
+                        store.clone(),
+                        RunConfig::new().with_run_id(run.run_id),
+                    )
+                    .await
+            }
+            _ => panic!("{name}: a case has a checkpoint or a run, not both"),
+        };
+        if let GraphExecutionResult::Failed(error) = &result {
+            panic!("{name}: expected a completed run, got: {error:?}");
+        }
+        completed(result);
+
+        let expected = case
+            .runs
+            .iter()
+            .map(|run| visit(&run.path, &run.key, run.is_recovery))
+            .collect();
+        assert_eq!(
+            in_key_order(journal.visits()),
+            in_key_order(expected),
+            "{name}"
+        );
+    }
+}
+
+/// STRATA-SPEC-005, section 10.2: `/` separates a path's names, so a node
+/// named `G/b` would share its key with branch `b` of group `G`. The shared
+/// validator refuses it (`STRATA_ERR_INVALID_NAME`), so such a graph never
+/// runs.
+#[test]
+fn a_node_or_a_branch_with_a_slash_in_its_name_does_not_compile() {
+    let journal = Journal::new();
+    let refused = |graph: StateGraph<Job>| match graph.compile() {
+        Err(StrataError::GraphInvalid(result)) => result
+            .errors
+            .iter()
+            .map(|e| (e.code, e.node.clone(), e.related_node.clone()))
+            .collect::<Vec<_>>(),
+        Err(other) => panic!("expected an invalid graph, got: {other:?}"),
+        Ok(_) => panic!("expected an invalid graph, but it compiled"),
+    };
+
+    assert_eq!(
+        refused(chain(&journal, &["A", "G/b"])),
+        [("STRATA_ERR_INVALID_NAME", "G/b".to_string(), None)]
+    );
+    let group = StateGraph::<Job>::new().add_parallel_group(
+        "G",
+        ParallelBranches::new()
+            .async_branch("a", branch(journal.clone()))
+            .async_branch("x/y", branch(journal.clone())),
+        |entry: &Job, _| entry.clone(),
+    );
+    assert_eq!(
+        refused(group),
+        [(
+            "STRATA_ERR_INVALID_NAME",
+            "G".to_string(),
+            Some("x/y".to_string())
+        )]
+    );
 }
 
 // --- Cost --------------------------------------------------------------------

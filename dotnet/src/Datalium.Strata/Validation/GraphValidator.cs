@@ -11,7 +11,8 @@ namespace Datalium.Strata.Validation;
 /// accepted/rejected by the other.
 ///
 /// It recurses (<c>design/22-Graph-Structure-In-Definitions.md</c>): each parallel group must have at
-/// least one branch, with unique names, and each subgraph's child topology is validated as a graph in
+/// least one branch, with unique names, no node or branch name may contain <c>/</c> (the separator in a
+/// node's path), and each subgraph's child topology is validated as a graph in
 /// its own right, its errors naming nodes by their qualified path (<c>Remediate/Abort</c>), the path
 /// run events use.
 /// </summary>
@@ -26,7 +27,7 @@ public static class GraphValidator
 
     /// <summary>
     /// Every error in <paramref name="topology"/>, at every level, in this order: the level's own (entry
-    /// point, dangling edges, orphans, unguarded cycles, nodes with no path to an end), then its groups' in node order, then each
+    /// point, names with <c>/</c>, dangling edges, orphans, unguarded cycles, nodes with no path to an end), then its groups' in node order, then each
     /// subgraph child's, in node order. A level whose entry point is missing reports only that, as
     /// before.
     /// </summary>
@@ -60,6 +61,7 @@ public static class GraphValidator
             return;
         }
 
+        AddNameErrors(topology, prefix, result);
         AddDanglingEdgeErrors(topology, nodeNames, Q, result);
 
         var adjacency = BuildAdjacency(topology, nodeNames);
@@ -83,6 +85,30 @@ public static class GraphValidator
                 var map = detail.Kind == GraphNodeKind.Map;
                 ValidateLevel(child, Q(node) + (map ? "/*/" : "/"), inMap || map, result);
             }
+        }
+    }
+
+    /// <summary>
+    /// What a name with <c>/</c> in it is told: <c>/</c> separates the names in a node's path, so <c>G/b</c>
+    /// could be a node or branch <c>b</c> of group <c>G</c>.
+    /// </summary>
+    private const string Slash = "'/' separates the names in a node's path";
+
+    /// <summary>
+    /// Every node of a level whose name contains <c>/</c>, in node order. A map item's key can't either, but
+    /// it comes from the state, so the map checks it when it runs (<c>design/27-Map-Fan-Out.md</c>).
+    /// </summary>
+    private static void AddNameErrors(GraphTopology topology, string prefix, ValidationResult result)
+    {
+        var at = prefix.Length == 0 ? string.Empty : $" in '{prefix[..^1]}'";
+        foreach (var node in topology.Nodes.Where(node => node.Contains('/', StringComparison.Ordinal)))
+        {
+            result.Errors.Add(new ValidationError(
+                ValidationErrorKind.InvalidName,
+                "STRATA_ERR_INVALID_NAME",
+                prefix + node,
+                null,
+                $"Node name '{node}'{at} contains '/'; {Slash}."));
         }
     }
 
@@ -154,20 +180,7 @@ public static class GraphValidator
                 continue;
             }
 
-            var seen = new HashSet<string>();
-            var reported = new HashSet<string>();
-            foreach (var branch in branches)
-            {
-                if (!seen.Add(branch.Name) && reported.Add(branch.Name))
-                {
-                    result.Errors.Add(new ValidationError(
-                        ValidationErrorKind.DuplicateBranch,
-                        "STRATA_ERR_DUPLICATE_BRANCH",
-                        group,
-                        branch.Name,
-                        $"Parallel group '{group}' has more than one branch named '{branch.Name}'."));
-                }
-            }
+            AddBranchErrors(group, branches, result);
 
             // design/26-Parallel-Group-Controls-And-Joins.md: a quorum must be reachable.
             if (detail.Join is { Policy: JoinKind.Quorum } join
@@ -180,6 +193,39 @@ public static class GraphValidator
                     group,
                     null,
                     $"Parallel group '{group}' has a quorum of {stated}, which isn't between 1 and its {branches.Count} branches."));
+            }
+        }
+    }
+
+    /// <summary>
+    /// A group's branches, in order: a name with <c>/</c> where it first appears, and one error per name used
+    /// more than once, where it first repeats.
+    /// </summary>
+    private static void AddBranchErrors(string group, IReadOnlyList<GraphBranch> branches, ValidationResult result)
+    {
+        var seen = new HashSet<string>();
+        var reported = new HashSet<string>();
+        foreach (var name in branches.Select(branch => branch.Name))
+        {
+            var first = seen.Add(name);
+            if (first && name.Contains('/', StringComparison.Ordinal))
+            {
+                result.Errors.Add(new ValidationError(
+                    ValidationErrorKind.InvalidName,
+                    "STRATA_ERR_INVALID_NAME",
+                    group,
+                    name,
+                    $"Parallel group '{group}' has a branch named '{name}', which contains '/'; {Slash}."));
+            }
+
+            if (!first && reported.Add(name))
+            {
+                result.Errors.Add(new ValidationError(
+                    ValidationErrorKind.DuplicateBranch,
+                    "STRATA_ERR_DUPLICATE_BRANCH",
+                    group,
+                    name,
+                    $"Parallel group '{group}' has more than one branch named '{name}'."));
             }
         }
     }

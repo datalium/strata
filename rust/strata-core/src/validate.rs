@@ -10,7 +10,8 @@
 //! by the other.
 //!
 //! It recurses (`design/22-Graph-Structure-In-Definitions.md`): each parallel
-//! group must have at least one branch, with unique names, and each subgraph's
+//! group must have at least one branch, with unique names, no node or branch
+//! name may contain `/` (the separator in a node's path), and each subgraph's
 //! child definition is validated as a graph in its own right, its errors
 //! naming nodes by their qualified path (`Remediate/Abort`), the path run
 //! events use.
@@ -20,7 +21,10 @@ use std::collections::{HashMap, HashSet};
 use crate::parallel::JoinKind;
 use crate::schema::{GraphDefinition, GraphNodeDef, GraphNodeKind};
 
+/// What a [`ValidationError`] found. New kinds are added as validation learns
+/// new checks, so a `match` on it needs a `_` arm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum ValidationErrorKind {
     MissingEntryPoint,
     OrphanNode,
@@ -30,6 +34,11 @@ pub enum ValidationErrorKind {
     EmptyGroup,
     /// Two branches of one parallel group share a name.
     DuplicateBranch,
+    /// A node's or a branch's name contains `/`, which separates the names in
+    /// a node's path and its idempotency key
+    /// (`design/22-Graph-Structure-In-Definitions.md`,
+    /// `design/Arch-Specs/STRATA-SPEC-005.md`, section 10.2).
+    InvalidName,
     /// A parallel group's quorum join is missing its count, or it is below 1
     /// or above the branch count (`design/26-Parallel-Group-Controls-And-Joins.md`);
     /// or a map's is missing or below 1 (`design/27-Map-Fan-Out.md`).
@@ -82,7 +91,7 @@ struct AdjacentEdge {
 const ROUTE_CONDITIONS: [&str; 3] = ["on_reject", "on_timeout", "on_failure"];
 
 /// Every error in `graph`, at every level, in this order: the level's own
-/// (entry point, dangling edges, orphans, unguarded cycles, nodes with no path
+/// (entry point, names with `/`, dangling edges, orphans, unguarded cycles, nodes with no path
 /// to an end), then its groups'
 /// in node order, then each subgraph child's, in node order. A level whose
 /// entry point is missing reports only that, as before.
@@ -124,6 +133,7 @@ fn validate_level(
         return;
     }
 
+    add_name_errors(graph, q, result);
     add_dangling_edge_errors(graph, &node_names, q, result);
 
     // Only edges between two real nodes are followed by the passes below, so
@@ -168,6 +178,32 @@ fn validate_level(
             let item = if map { "/*" } else { "" };
             let prefix = format!("{}{item}/", q.name(&node.name));
             validate_level(child, &Qualify(&prefix), in_map || map, result);
+        }
+    }
+}
+
+/// What a name with `/` in it is told: `/` separates the names in a node's
+/// path, so `G/b` could be a node or branch `b` of group `G`.
+const SLASH: &str = "'/' separates the names in a node's path";
+
+/// Every node of a level whose name contains `/`, in node order. A map item's
+/// key can't either, but it comes from the state, so the map checks it when it
+/// runs (`design/27-Map-Fan-Out.md`).
+fn add_name_errors(graph: &GraphDefinition, q: &Qualify<'_>, result: &mut ValidationResult) {
+    for node in &graph.nodes {
+        if node.name.contains('/') {
+            let name = &node.name;
+            let at = match q.0.strip_suffix('/') {
+                Some(level) => format!(" in '{level}'"),
+                None => String::new(),
+            };
+            result.errors.push(ValidationError {
+                kind: ValidationErrorKind::InvalidName,
+                code: "STRATA_ERR_INVALID_NAME",
+                message: format!("Node name '{name}'{at} contains '/'; {SLASH}."),
+                node: q.name(name),
+                related_node: None,
+            });
         }
     }
 }
@@ -242,7 +278,19 @@ fn add_group_errors(graph: &GraphDefinition, q: &Qualify<'_>, result: &mut Valid
         let mut reported: HashSet<&str> = HashSet::new();
         for branch in branches {
             let name = branch.name.as_str();
-            if !seen.insert(name) && reported.insert(name) {
+            let first = seen.insert(name);
+            if first && name.contains('/') {
+                result.errors.push(ValidationError {
+                    kind: ValidationErrorKind::InvalidName,
+                    code: "STRATA_ERR_INVALID_NAME",
+                    node: group.clone(),
+                    related_node: Some(name.to_string()),
+                    message: format!(
+                        "Parallel group '{group}' has a branch named '{name}', which contains '/'; {SLASH}."
+                    ),
+                });
+            }
+            if !first && reported.insert(name) {
                 result.errors.push(ValidationError {
                     kind: ValidationErrorKind::DuplicateBranch,
                     code: "STRATA_ERR_DUPLICATE_BRANCH",
@@ -723,6 +771,41 @@ mod fixture_tests {
             )]
         );
         assert_eq!(result.errors[0].kind, ValidationErrorKind::DuplicateBranch);
+    }
+
+    #[test]
+    fn a_node_or_branch_name_with_a_slash_is_rejected_at_every_level() {
+        // STRATA-SPEC-005, section 10.2: `/` separates a path's names, so a
+        // node named `G/b` would share its path and its key with branch `b` of
+        // group `G`. A repeated branch name is reported once, then as a
+        // duplicate.
+        let result = validate(&load("graph-validation", "invalid-name.json"));
+        assert_eq!(
+            summary(&result),
+            [
+                ("STRATA_ERR_INVALID_NAME", "Notify/Slack", None),
+                ("STRATA_ERR_INVALID_NAME", "Investigate", Some("logs/app")),
+                (
+                    "STRATA_ERR_DUPLICATE_BRANCH",
+                    "Investigate",
+                    Some("logs/app")
+                ),
+                ("STRATA_ERR_INVALID_NAME", "Remediate/Apply/Fix", None),
+                ("STRATA_ERR_INVALID_NAME", "Fan/*/Read/Item", None),
+            ]
+        );
+        assert_eq!(result.errors[0].kind, ValidationErrorKind::InvalidName);
+        let messages: Vec<&str> = result.errors.iter().map(|e| e.message.as_str()).collect();
+        assert_eq!(
+            messages,
+            [
+                "Node name 'Notify/Slack' contains '/'; '/' separates the names in a node's path.",
+                "Parallel group 'Investigate' has a branch named 'logs/app', which contains '/'; '/' separates the names in a node's path.",
+                "Parallel group 'Investigate' has more than one branch named 'logs/app'.",
+                "Node name 'Apply/Fix' in 'Remediate' contains '/'; '/' separates the names in a node's path.",
+                "Node name 'Read/Item' in 'Fan/*' contains '/'; '/' separates the names in a node's path.",
+            ]
+        );
     }
 
     #[test]

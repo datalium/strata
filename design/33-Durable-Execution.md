@@ -290,7 +290,7 @@ Two things on `NodeContext` are for that:
 
 A node passes the key to whatever it changes: StrataOps' rollback write carries it in its authorization, so a recovered `Execute` never rolls back twice. A node with several effects derives one key per effect (`$"{ctx.IdempotencyKey}:notify"`).
 
-Under `Boundaries` nothing is recovered, and hop counts aren't stored unless the level has a hop limit, so the key ends with the run id (`…#3@018f…`): the same across a node's retries, never repeated by a later resume. A fresh run on a thread id that was used before starts counting hops again under either policy: don't reuse thread ids and rely on the key.
+Under `Boundaries` nothing is recovered, so the key ends with the run id (`…#3@018f…`): the same across a node's retries, never repeated by a later resume. It does at a level with a hop limit too, which stores its hop count: only a run compiled with `EveryNode` has keys without the run id. A `%`, `/` or `#` in the thread id or the run id is written `%25`, `%2F` or `%23`, and a node or branch name can't contain `/` (the graph doesn't compile), so two executions never share a key (since `1.0.0-rc.1`: thread `orders/42` gives `orders%2F42/B#2`). The format is normative in STRATA-SPEC-005, section 10. A fresh run on a thread id that was used before starts counting hops again under either policy: don't reuse thread ids and rely on the key.
 
 Hop counts (`strata.hops`, `design/24-Loop-Circuit-Breaker.md`) are written on every checkpoint level of an `EveryNode` run, limit or no limit.
 
@@ -488,7 +488,7 @@ Recommendations are in bold.
 11. **A resume's claim replaces the stamp.** **Yes.** A stamp and then a checkpoint are two writes, and a crash between them loses the approval with no way to give it again. One conditional append can't be half done.
 12. **A `failed` checkpoint for a run that gives up without one, or throws.** **Yes, under `EveryNode`.** A live process must not leave `running` behind. The alternative is a thread the driver retries into the same exception on every sweep.
 13. **Whose policy applies inside a subgraph.** **The outermost graph's.** The thread is its, and only it has the store.
-14. **The idempotency key's shape.** **Thread, node path, hop numbers**; the run id is appended when hops aren't stored. It needs nothing new on the wire but `strata.hops` on every level.
+14. **The idempotency key's shape.** **Thread, node path, hop numbers**; the run id is appended when the run isn't durable. It needs nothing new on the wire but `strata.hops` on every level.
 15. **What `IsRecovery` covers.** **The node in flight at each level, until a commit; everything inside a re-run group or map.** Narrower would miss an effect that may have happened; wider would cry wolf on every node of a recovered run.
 16. **Staleness without a new query.** **List `running`, read each lease.** One round trip per running thread per sweep, which is nothing at StrataOps' scale. A store-side "not held" filter is "Not built".
 17. **`StaleAfter` has no default without a lease.** **Refuse the call.** Any default would recover live threads in some deployment; the caller has to know its longest node.
@@ -517,6 +517,7 @@ Built 2026-10-10 in both engines, every store adapter, both decision workers and
 - **A lease that can't be read** (a store error other than "no leases") skips the thread in Rust (`its lease can't be read: …`) and propagates in .NET, as a load error does in each.
 - **`strata.hops` is on every checkpoint a durable run writes,** the `interrupted`, `failed`, `cancelled` and `completed` ones included, at every level, not only on the `running` ones. A thread written without it (by a graph compiled before, or with `Boundaries`) counts from zero.
 - **A branch's key** is its group's hop under its own path (`t/Group/b1#1`). In Rust the group's context makes it (`NodeContext::for_branch`); in .NET the group's level does.
+- **Keys escape their ids, and names can't hold `/` (2026-11-27, for `1.0.0-rc.1`, #65).** Writing the key's format into STRATA-SPEC-005 found that a `/` in a thread id, a node name or a branch name could give two executions one key: thread `t/G` with node `b`, branch `b` of group `G` in thread `t`, and a node named `G/b` all got `t/G/b#1`. The key now percent-encodes `%`, `/` and `#` in the thread id and the run id (Rust `key_part`, .NET `LevelScope.KeyPart`), and the shared validator refuses a node or branch name with `/` (`STRATA_ERR_INVALID_NAME`, STRATA-SPEC-004). A key whose ids hold none of the three is unchanged. A durable thread whose id holds one, started before and recovered after the upgrade, runs its node in flight once under a new key.
 - **Rust keeps a copy of the last `running` checkpoint** it saved (a clone per save), where .NET keeps a reference: the price of taking the checkpoint by value in the store port.
 - **`Recovered` and the claim's `CheckpointSaved` come in that order after `RunStarted`:** `RunStarted`, `CheckpointSaved(Running)`, `Recovered`, then the nodes.
 

@@ -3,6 +3,7 @@
 //! (SG-02, SG-03) and `design/18-Run-Observability.md` (SG-14, SG-19, SG-20).
 
 use std::any::{Any, TypeId};
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, LazyLock, Mutex, OnceLock, Weak};
@@ -312,6 +313,26 @@ pub struct NodeContext {
     is_recovery: bool,
 }
 
+/// A caller's id, the thread id or the run id, as it appears in an idempotency
+/// key (STRATA-SPEC-005, section 10.2): `%` as `%25`, `/` as `%2F` and `#` as
+/// `%23`, so the id can't run into the path or the hops. An id without them is
+/// unchanged.
+fn key_part(id: &str) -> Cow<'_, str> {
+    if !id.contains(['%', '/', '#']) {
+        return Cow::Borrowed(id);
+    }
+    let mut escaped = String::with_capacity(id.len() + 8);
+    for c in id.chars() {
+        match c {
+            '%' => escaped.push_str("%25"),
+            '/' => escaped.push_str("%2F"),
+            '#' => escaped.push_str("%23"),
+            c => escaped.push(c),
+        }
+    }
+    Cow::Owned(escaped)
+}
+
 /// What follows a node's path in its idempotency key: the hop numbers from
 /// the outermost level in (`chain` is the enclosing levels', each followed by
 /// a dot), and whether the run id follows them, as it does in every run that
@@ -460,14 +481,16 @@ impl NodeContext {
     /// same when the node runs again in a recovery ([`Self::is_recovery`]). In
     /// any other run it ends with `@` and the run id, so a later resume never
     /// repeats one. A branch of a parallel group has its own, under its
-    /// group's hop. Empty in a hand-built context, unless set.
+    /// group's hop. A `%`, `/` or `#` in the thread id or the run id is
+    /// percent-encoded (`%25`, `%2F`, `%23`), so no two threads, and no two
+    /// runs, share a key. Empty in a hand-built context, unless set.
     pub fn idempotency_key(&self) -> &str {
         self.idempotency_key.get_or_init(|| match &self.hops {
             Some(hops) => {
-                let (thread_id, path) = (&self.shared.thread_id, &self.path);
+                let (thread_id, path) = (key_part(&self.shared.thread_id), &self.path);
                 let (chain, hop) = (&hops.chain, hops.hop);
                 Arc::from(if hops.with_run_id {
-                    format!("{thread_id}/{path}#{chain}{hop}@{}", self.run_id)
+                    format!("{thread_id}/{path}#{chain}{hop}@{}", key_part(&self.run_id))
                 } else {
                     format!("{thread_id}/{path}#{chain}{hop}")
                 })

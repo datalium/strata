@@ -365,6 +365,55 @@ fn graph_validate_rejects_an_empty_group_and_a_duplicate_branch() {
 }
 
 #[test]
+fn graph_validate_rejects_a_name_with_a_slash() {
+    // STRATA-SPEC-005, section 10.2: `/` separates the names in a path.
+    let path = fixture_path("graph-validation/invalid-name.json");
+    let (code, json) = validate_json(&path);
+    assert_eq!(code, Some(1));
+    let errors: Vec<(&str, &str, &str)> = json["errors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| {
+            (
+                e["code"].as_str().unwrap(),
+                e["kind"].as_str().unwrap(),
+                e["node"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        errors,
+        [
+            ("STRATA_ERR_INVALID_NAME", "InvalidName", "Notify/Slack"),
+            ("STRATA_ERR_INVALID_NAME", "InvalidName", "Investigate"),
+            (
+                "STRATA_ERR_DUPLICATE_BRANCH",
+                "DuplicateBranch",
+                "Investigate"
+            ),
+            (
+                "STRATA_ERR_INVALID_NAME",
+                "InvalidName",
+                "Remediate/Apply/Fix"
+            ),
+            ("STRATA_ERR_INVALID_NAME", "InvalidName", "Fan/*/Read/Item"),
+        ]
+    );
+
+    // A branch's human line names it by its path, as a duplicate's does.
+    let output = strata()
+        .args(["graph", "validate", "--path", &path])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("[STRATA_ERR_INVALID_NAME] Investigate/logs/app:"),
+        "{stdout}"
+    );
+}
+
+#[test]
 fn graph_validate_reads_joins_and_rejects_an_invalid_quorum_at_every_level() {
     // design/26-Parallel-Group-Controls-And-Joins.md
     let (code, json) = validate_json(&fixture_path("graph-export/joins.json"));
