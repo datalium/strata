@@ -179,6 +179,34 @@ public class GraphValidationParityTests
     }
 
     [Fact]
+    public void A_Node_Or_Branch_Name_With_A_Slash_Is_Rejected_At_Every_Level()
+    {
+        // STRATA-SPEC-005, section 10.2: `/` separates a path's names, so a node named `G/b` would share its
+        // path and its key with branch `b` of group `G`. A repeated branch name is reported once, then as a
+        // duplicate.
+        var result = GraphValidator.Validate(LoadTopology("invalid-name.json"));
+        Assert.Equal(
+            [
+                ("STRATA_ERR_INVALID_NAME", "Notify/Slack", null),
+                ("STRATA_ERR_INVALID_NAME", "Investigate", "logs/app"),
+                ("STRATA_ERR_DUPLICATE_BRANCH", "Investigate", "logs/app"),
+                ("STRATA_ERR_INVALID_NAME", "Remediate/Apply/Fix", null),
+                ("STRATA_ERR_INVALID_NAME", "Fan/*/Read/Item", null),
+            ],
+            Summary(result));
+        Assert.Equal(ValidationErrorKind.InvalidName, result.Errors[0].Kind);
+        Assert.Equal(
+            [
+                "Node name 'Notify/Slack' contains '/'; '/' separates the names in a node's path.",
+                "Parallel group 'Investigate' has a branch named 'logs/app', which contains '/'; '/' separates the names in a node's path.",
+                "Parallel group 'Investigate' has more than one branch named 'logs/app'.",
+                "Node name 'Apply/Fix' in 'Remediate' contains '/'; '/' separates the names in a node's path.",
+                "Node name 'Read/Item' in 'Fan/*' contains '/'; '/' separates the names in a node's path.",
+            ],
+            result.Errors.Select(error => error.Message));
+    }
+
+    [Fact]
     public void A_Guarded_Loop_With_No_Way_Out_Is_Rejected()
     {
         // Every node is reachable and every loop guarded, but every node has an outgoing edge, so no

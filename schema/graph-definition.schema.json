@@ -36,7 +36,11 @@
         "additionalProperties": false,
         "required": ["name", "metadata"],
         "properties": {
-          "name": { "type": "string", "minLength": 1 },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The node's name at its level. Validation refuses a name that contains '/', the separator in a node's path and its idempotency key (STRATA_ERR_INVALID_NAME, STRATA-SPEC-005 section 10.2)."
+          },
           "metadata": {
             "type": ["object", "null"],
             "description": "Description only (agent, model policy, ...), set with SetNodeMetadata / set_node_metadata; the engines never read it. Keys are non-empty, never start with the reserved prefix 'strata.', and are written sorted.",
@@ -93,7 +97,11 @@
               "additionalProperties": false,
               "required": ["name", "metadata"],
               "properties": {
-                "name": { "type": "string", "minLength": 1 },
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "The branch's name, unique in its group. Validation refuses a name that contains '/' (STRATA_ERR_INVALID_NAME)."
+                },
                 "metadata": {
                   "type": ["object", "null"],
                   "additionalProperties": { "type": "string" }

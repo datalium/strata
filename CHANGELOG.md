@@ -44,10 +44,16 @@ Each entry ends with the wire formats that version writes and reads. The rules b
   - **New shared test fixtures** in `schema/fixtures/mcp/`. These are tests both engines pass, not formats Strata writes.
   - **Docs samples** for the stratamesh.dev page `/guides/tools/mcp-servers/`, in `examples/docs-snippets/` in both languages, tested like the others. They connect to `inventory-mcp`, a small MCP server of their own (`examples/docs-snippets/inventory-mcp`, and the Rust crate's `inventory-mcp` example), over stdio and HTTP.
 - **The crash contract and the idempotency key's format are now part of STRATA-SPEC-005** (section 10). Both used to be written down only in `design/33`. The section says which checkpoint is saved before a node runs, what a recovery runs again, and why that is at least once. It also gives the exact format of `NodeContext.IdempotencyKey` (Rust `idempotency_key()`), with the steps for deriving a recovered node's key from a checkpoint, and what the key doesn't promise.
-  - **What a caller must do:** treat the key as an opaque string and compare it for equality. It is unique only if thread ids aren't reused and no thread id, node name or branch name contains `/`.
-  - **New shared test fixtures** in `schema/fixtures/idempotency-key/`. Both engines recover each case's checkpoint, or run it fresh, and must give every node the key and `IsRecovery` the case lists. These are tests, not a format Strata writes.
+  - **What a caller must do:** treat the key as an opaque string and compare it for equality. Don't reuse a thread id for a new run, or a run id you supply.
+  - **Two executions no longer share a key.** A `/` in a thread id, a node name or a branch name could make them collide: thread `t/G` with node `b`, branch `b` of group `G` in thread `t`, and a node named `G/b` all got `t/G/b#1`. Both engines now:
+    - **percent-encode `%`, `/` and `#` in the thread id and the run id** inside the key, so thread `orders/42` gives `orders%2F42/B#2`. A key whose ids hold none of the three is unchanged. Thread ids may still hold any character.
+    - **refuse a node or branch name with `/`** when the graph compiles, with the new validation error `STRATA_ERR_INVALID_NAME`: Rust `ValidationErrorKind::InvalidName` in `StrataError::GraphInvalid`, .NET `ValidationErrorKind.InvalidName` in `GraphCompilationException`. `strata graph validate` refuses one in a definition file too. `/` already separated the names in node paths, in events, errors and telemetry, so such a name was ambiguous there as well. Map item keys were already refused for it.
+  - **Upgrading:**
+    - A graph with `/` in a node or branch name no longer compiles. Rename the node.
+    - A durable thread whose id holds `%`, `/` or `#`, started by an earlier version and recovered by this one, runs its node in flight under a key the earlier attempt didn't use. A system that deduplicates on the key sees it as a new request, once.
+    - Rust code that matches `ValidationErrorKind` exhaustively needs an arm for `InvalidName`.
+  - **New shared test fixtures** in `schema/fixtures/idempotency-key/`. Both engines recover each case's checkpoint, or run it fresh, and must give every node the key and `IsRecovery` the case lists. These are tests, not a format Strata writes. `schema/fixtures/graph-validation/invalid-name.json` pins the new validation error, for both engines and the CLI.
   - **A correction to `design/33`:** a key ends with `@` and the run id whenever the run isn't durable. That includes a `Boundaries` level with a hop limit, which stores its hop count. The doc used to say "when hops aren't stored".
-  - **Nothing an application sees changes.** Both engines already behaved this way.
 
 ### Wire formats
 

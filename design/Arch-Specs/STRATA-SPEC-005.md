@@ -168,13 +168,13 @@ Then the other engine opens them with its current stores. It must migrate the ol
 
 A new record version, database step or store encoding must come with fixtures for both kinds: a shared fixture, and a case in the cross-engine scenario if it changes what a store leaves in a database.
 
-**The idempotency-key fixtures** (`schema/fixtures/idempotency-key/cases.json`; `rust/strata-core/tests/durable_execution.rs`, `dotnet/tests/Datalium.Strata.Tests/DurableExecutionTests.cs`) pin section 10. Each case is a graph, a policy, and either a `running` checkpoint to recover or a fresh run, with every handler execution it must make: its path, its key and its `IsRecovery`. Each engine's test saves the checkpoint and recovers the thread, or runs it, with handlers that record what their `NodeContext` says, and compares that with the case. The cases cover a node at the outermost level, a level without `strata.hops`, a node inside a subgraph, a subgraph not yet entered, a parallel group, a map, a durable run's keys, and runs that aren't durable, one of them with a hop limit.
+**The idempotency-key fixtures** (`schema/fixtures/idempotency-key/cases.json`; `rust/strata-core/tests/durable_execution.rs`, `dotnet/tests/Datalium.Strata.Tests/DurableExecutionTests.cs`) pin section 10. Each case is a graph, a policy, and either a `running` checkpoint to recover or a fresh run, with every handler execution it must make: its path, its key and its `IsRecovery`. Each engine's test saves the checkpoint and recovers the thread, or runs it, with handlers that record what their `NodeContext` says, and compares that with the case. The cases cover a node at the outermost level, a level without `strata.hops`, a node inside a subgraph, a subgraph not yet entered, a parallel group, a map, a durable run's keys, a thread id and a run id holding `%`, `/` and `#`, in a run and in a recovery, and runs that aren't durable, one of them with a hop limit. The refusal of `/` in names is pinned by `schema/fixtures/graph-validation/invalid-name.json`, which both engines' validators and the CLI read (STRATA-SPEC-004).
 
 ---
 
 ### 10. Crash Recovery and the Idempotency Key
 
-A thread one engine wrote may be recovered by the other, so what a recovery runs again, and the key it runs it under, must be the same in both. This section is normative for an engine that runs or recovers a durable thread, and for a store or tool that derives a key from a checkpoint. It describes what both engines do from checkpoint `1.7.0` (`design/33`), and adds no field: it needs only `status`, `next_node`, `nested` and the `strata.hops` metadata key.
+A thread one engine wrote may be recovered by the other, so what a recovery runs again, and the key it runs it under, must be the same in both. This section is normative for an engine that runs or recovers a durable thread, and for a store or tool that derives a key from a checkpoint. It describes what both engines do from checkpoint `1.7.0` (`design/33`), with the escaping of ids and the refusal of `/` in names (10.2) from `1.0.0-rc.1`. It adds no field: it needs only `thread_id`, `status`, `next_node`, `nested` and the `strata.hops` metadata key.
 
 A **durable run** is one whose outermost graph is compiled with `CheckpointPolicy.EveryNode` (Rust `CheckpointPolicy::EveryNode`). The outermost graph's policy is the run's, at every depth. Any other run, including one under the default, `Boundaries`, is not durable.
 
@@ -197,36 +197,41 @@ A **durable run** is one whose outermost graph is compiled with `CheckpointPolic
 Every execution of a node has a key: `NodeContext.IdempotencyKey` in .NET, `NodeContext::idempotency_key()` in Rust. A node passes it to whatever it changes outside its state, so that system can tell a repeat from a new request.
 
 ```text
-key   = thread "/" path "#" hops [ "@" run-id ]
-path  = segment *( "/" segment )
-hops  = hop *( "." hop )
-hop   = a decimal integer of 1 or more, in ASCII digits, without sign or leading zeros
+key     = thread "/" path "#" hops [ "@" run-id ]
+thread  = escaped
+run-id  = escaped
+path    = segment *( "/" segment )
+segment = a node name, a branch name or a map item key: one or more characters, none of them "/"
+hops    = hop *( "." hop )
+hop     = a decimal integer of 1 or more, in ASCII digits, without sign or leading zeros
+escaped = the id with each "%" written "%25", each "/" written "%2F" and each "#" written "%23"
 ```
 
-1. **`thread`** is the run's thread id, as the caller gave it. At every depth it is the outermost thread's id, not a nested level's `thread_id`.
-2. **`path`** names the node from the outermost level in:
+1. **`thread`** is the run's thread id, escaped. At every depth it is the outermost thread's id, not a nested level's `thread_id`. Thread ids are the caller's, and may hold any character (`tenant-7/order-42`), so the key escapes the three characters its format relies on, `%`, `/` and `#`, and only those, with uppercase hex. A thread id without them appears as it is. Escaping `%` makes the mapping one to one: `a%2Fb` and `a/b` are different thread ids, and their keys differ (`a%252Fb/…`, `a%2Fb/…`).
+2. **`path`** names the node from the outermost level in. No segment contains `/`. An engine must refuse, when the graph compiles, a node or a branch whose name contains `/`. Validation reports it as `STRATA_ERR_INVALID_NAME` (STRATA-SPEC-004), and the graph never runs. A map refuses an item key with `/` before any item starts (`design/27`). The path is not escaped:
    - a node at the outermost level: its name;
    - a node inside subgraph node `S`: `S`'s path, `/`, its name;
    - branch `b` of parallel group `G`: `G`'s path, `/`, `b`. A branch runs at its group's level: it adds a segment, not a hop;
    - node `N` inside the item with key `k` of map `M`: `M`'s path, `/`, `k`, `/`, `N`. An item is a level of its own: it adds two segments and a hop.
 3. **`hops`** has one number per level, from the outermost in: the outermost level, then one for each subgraph or map item the node is inside. A level's number for a node is the hops that level made before the node, plus 1. A hop is a node started at the level (`design/24`, "What counts"): a fallback is a hop of its own, a retry is not, and a group, a map or a subgraph node is one hop at its level. A new level counts from 0. A resume or a recovery counts from the level's `strata.hops`.
-4. **`@` and the run id** follow when, and only when, the run isn't durable. Without stored hop counts a later resume could repeat a key, so the run id keeps it from doing so. A durable run's key has no run id, so a recovery in another process, or in the other engine, repeats it.
+4. **`@` and the run id** follow when, and only when, the run isn't durable. Without stored hop counts a later resume could repeat a key, so the run id keeps it from doing so. A durable run's key has no run id, so a recovery in another process, or in the other engine, repeats it. The run id is the engine's, or the caller's (`RunOptions.RunId`, Rust `RunConfig::with_run_id`), and is escaped as the thread id is.
 5. **What stays the same.** A node's retries have its key. In a durable run, so does the node's run again in a recovery, and in a resume that re-enters the node a checkpoint stopped at (a failed or cancelled node, `design/24`, "Persistence"). The same node reached again later in the thread, by a loop or after a resume continues past a boundary, has another.
 
 **Deriving a key from a checkpoint.** A store or tool may compute the key of the node a recovery of a `running` checkpoint would run, without running anything:
 
-1. Let level 0 be the checkpoint, and level *i* + 1 the `nested` checkpoint of level *i*, down to the innermost.
+1. Let level 0 be the checkpoint, and level *i* + 1 the `nested` checkpoint of level *i*, down to the innermost. The key starts with level 0's `thread_id`, escaped, and `/`.
 2. For each level, its hop is its `strata.hops` value plus 1. A level without `strata.hops` counts from 0, so its hop is 1. A value that isn't a decimal integer is an error: a recovery refuses it, and so must a tool.
 3. The path is the levels' `next_node` values, outermost first, joined with `/`, and the hops are the levels' hops, joined with `.`.
 4. If the innermost `next_node` is a subgraph node, its child starts afresh: the key is that of the child's entry point, which adds `/` and the entry point's name to the path and a hop of `1`. If it is a parallel group, each branch's key adds `/` and the branch's name to the path, with the same hops. If it is a map, an item's first node adds `/`, the item key, `/` and the node's name, and a hop of `1`. Entry points and branch names come from the graph, and item keys from the state, so a tool needs the graph, or the state's items, to derive these.
 
-For example, `checkpoint-lifecycle/nested-running.json` (thread `thread_nested_running_demo`, outermost level `next_node` `Work` with `strata.hops` `1`, nested level `next_node` `Y` with `strata.hops` `1`) is recovered by running `Y` under the key `thread_nested_running_demo/Work/Y#2.2`. `checkpoint-lifecycle/running.json` runs `B` under `thread_running_demo/B#2`.
+For example, `checkpoint-lifecycle/nested-running.json` (thread `thread_nested_running_demo`, outermost level `next_node` `Work` with `strata.hops` `1`, nested level `next_node` `Y` with `strata.hops` `1`) is recovered by running `Y` under the key `thread_nested_running_demo/Work/Y#2.2`. `checkpoint-lifecycle/running.json` runs `B` under `thread_running_demo/B#2`. A thread `orders/42` recovered at `B` with `strata.hops` `1` runs it under `orders%2F42/B#2`.
 
 #### 10.3 What the Key Promises, and What It Doesn't
 
 - **A system that receives a key must treat it as an opaque string**, compared for equality, and must not parse it. Its format is fixed here so that both engines and every tool derive the same key, not so that callers read meaning into it. A node with several effects derives one key for each by adding a suffix of its own, for example `{key}:notify`.
 - **Exactly once needs the other side.** An effect happens once only when the system the node calls ignores a request whose key it has already seen. Nothing in the engine, the store or the lease makes an outside effect exactly once.
-- **A key is unique only for distinct ids and names.** Two executions get the same key if a fresh run reuses a thread id (hops start again from 0), or if a thread id, a node name or a branch name contains `/`. For example, thread `t/G` with node `b` at its first hop and branch `b` of group `G` in thread `t` both get `t/G/b#1`, and so does a node named `G/b` at the first hop of thread `t`. Map item keys can't contain `/` (`design/27`); the engines don't refuse the others. An application that relies on the key must not reuse thread ids, and must not use `/` in thread ids, node names or branch names.
+- **Distinct executions get distinct keys, by construction.** The thread is everything before the first `/`, since an escaped id has none. The hops are what follows the last `#`, up to an `@` if there is one, since neither the hops nor an escaped run id holds a `#`. The path is what lies between, and it splits into its names at each `/`, since no name holds one. So two keys are equal only when the thread, the path, the hops and the run id all are, whatever characters the ids hold. Without these rules, thread `t/G` with node `b`, branch `b` of group `G` in thread `t`, and a node named `G/b` in thread `t` would all get `t/G/b#1` at their first hop. A `#` or an `@` in a node name, a branch name or an item key needs no escaping, by the same reasoning.
+- **What the engine can't make unique.** A fresh run that reuses a thread id starts its hops again from 0, so it repeats the keys of the earlier run, and a caller that gives two runs that aren't durable one run id repeats theirs. An application that relies on the key must not reuse a thread id for a new run, nor a run id.
 
 ---
 
@@ -263,5 +268,12 @@ Written after the build: it describes what `0.9.0-preview.3` writes and reads, a
 - **`schema/README.md`:** links here; "Records" lists the memory record; "Versioning" no longer says every record is at `1.0.0`; "Schema versions" lists the `memory` component.
 
 **Added 2026-11-26: section 10**, the crash contract and the idempotency key's format, from `design/33` and checked against both engines' code. It changes no wire format and no behaviour. Writing it down found one wording error, in `design/33`, now fixed: the run id ends a key whenever the run isn't durable, not only "when hops aren't stored". A `Boundaries` level with a hop limit stores its hops and still adds the run id. The `idempotency-key` fixtures (section 9) come with it.
+
+**Changed 2026-11-27, for `1.0.0-rc.1`: keys are unique by construction.** Writing section 10.3 found that a `/` in a thread id, a node name or a branch name could give two executions one key. Only map item keys were refused for it. Both engines now:
+
+- **refuse a node or branch name with `/`** when the graph compiles: `STRATA_ERR_INVALID_NAME`, from the shared validator, so `strata graph validate` refuses one in a definition file too. `/` already separated the names in every node path (events, errors, telemetry, the CLI), which such a name made ambiguous. No graph in this repository, its examples or its docs samples had one;
+- **escape `%`, `/` and `#` in the thread id and the run id** inside the key. A key whose ids hold none of them is unchanged.
+
+Thread ids aren't refused, because they are the caller's data and `/` is common in them. The one cost is at the upgrade: a durable thread whose id holds `%`, `/` or `#`, started before `1.0.0-rc.1` and recovered after it, runs its node in flight under a key its earlier attempt didn't use, so a system that deduplicates on the key sees a new request once. Checked by breaking it, then restoring it: with the escaping removed, the three new `idempotency-key` cases fail in each engine.
 
 **Not covered:** Redis has no migrations to test (section 6, rule 5), and the Cloud store's wire contract is Cloud's (`design/30`, `design/43`).

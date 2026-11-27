@@ -2200,6 +2200,44 @@ async fn every_idempotency_key_fixture_holds() {
     }
 }
 
+/// STRATA-SPEC-005, section 10.2: `/` separates a path's names, so a node
+/// named `G/b` would share its key with branch `b` of group `G`. The shared
+/// validator refuses it (`STRATA_ERR_INVALID_NAME`), so such a graph never
+/// runs.
+#[test]
+fn a_node_or_a_branch_with_a_slash_in_its_name_does_not_compile() {
+    let journal = Journal::new();
+    let refused = |graph: StateGraph<Job>| match graph.compile() {
+        Err(StrataError::GraphInvalid(result)) => result
+            .errors
+            .iter()
+            .map(|e| (e.code, e.node.clone(), e.related_node.clone()))
+            .collect::<Vec<_>>(),
+        Err(other) => panic!("expected an invalid graph, got: {other:?}"),
+        Ok(_) => panic!("expected an invalid graph, but it compiled"),
+    };
+
+    assert_eq!(
+        refused(chain(&journal, &["A", "G/b"])),
+        [("STRATA_ERR_INVALID_NAME", "G/b".to_string(), None)]
+    );
+    let group = StateGraph::<Job>::new().add_parallel_group(
+        "G",
+        ParallelBranches::new()
+            .async_branch("a", branch(journal.clone()))
+            .async_branch("x/y", branch(journal.clone())),
+        |entry: &Job, _| entry.clone(),
+    );
+    assert_eq!(
+        refused(group),
+        [(
+            "STRATA_ERR_INVALID_NAME",
+            "G".to_string(),
+            Some("x/y".to_string())
+        )]
+    );
+}
+
 // --- Cost --------------------------------------------------------------------
 
 #[tokio::test]

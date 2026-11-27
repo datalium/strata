@@ -1415,6 +1415,27 @@ public class DurableExecutionTests(ITestOutputHelper output)
         Assert.Equal(InKeyOrder(expected), InKeyOrder(journal.Visits));
     }
 
+    /// <summary>
+    /// STRATA-SPEC-005, section 10.2: <c>/</c> separates a path's names, so a node named <c>G/b</c> would share
+    /// its key with branch <c>b</c> of group <c>G</c>. The shared validator refuses it
+    /// (<c>STRATA_ERR_INVALID_NAME</c>), so such a graph never runs.
+    /// </summary>
+    [Fact]
+    public void A_Node_Or_A_Branch_With_A_Slash_In_Its_Name_Does_Not_Compile()
+    {
+        var journal = new Journal();
+        static List<(string, string, string?)> Refused(StateGraph<Job> graph) =>
+            [.. Assert.Throws<Validation.GraphCompilationException>(() => graph.Compile())
+                .Result.Errors.Select(e => (e.Code, e.Node, e.RelatedNode))];
+
+        Assert.Equal([("STRATA_ERR_INVALID_NAME", "G/b", null)], Refused(Chain(journal, "A", "G/b")));
+        var group = new StateGraph<Job>().AddParallelGroup(
+            "G",
+            new ParallelBranches<Job>().Branch("a", Node(journal)).Branch("x/y", Node(journal)),
+            (job, _) => job);
+        Assert.Equal([("STRATA_ERR_INVALID_NAME", "G", "x/y")], Refused(group));
+    }
+
     // --- Cost ---
 
     [Fact]

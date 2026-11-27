@@ -287,9 +287,22 @@ internal sealed record LevelScope(
     /// </summary>
     public string KeyFor(string path) =>
         Run.Durable
-            ? string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{Run.ThreadId}/{path}#{HopChain}{Hop}")
+            ? string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{KeyPart(Run.ThreadId)}/{path}#{HopChain}{Hop}")
             : string.Create(
-                System.Globalization.CultureInfo.InvariantCulture, $"{Run.ThreadId}/{path}#{HopChain}{Hop}@{Run.Telemetry.RunId}");
+                System.Globalization.CultureInfo.InvariantCulture,
+                $"{KeyPart(Run.ThreadId)}/{path}#{HopChain}{Hop}@{KeyPart(Run.Telemetry.RunId)}");
+
+    /// <summary>
+    /// A caller's id, the thread id or the run id, as it appears in an idempotency key (STRATA-SPEC-005,
+    /// section 10.2): <c>%</c> as <c>%25</c>, <c>/</c> as <c>%2F</c> and <c>#</c> as <c>%23</c>, so the id
+    /// can't run into the path or the hops. An id without them is unchanged.
+    /// </summary>
+    private static string KeyPart(string id) =>
+        id.AsSpan().IndexOfAny('%', '/', '#') < 0
+            ? id
+            : id.Replace("%", "%25", StringComparison.Ordinal)
+                .Replace("/", "%2F", StringComparison.Ordinal)
+                .Replace("#", "%23", StringComparison.Ordinal);
 
     /// <summary>
     /// What a checkpoint at this level holds in <c>metadata</c>: the run's keys, <paramref name="engine"/>'s,
